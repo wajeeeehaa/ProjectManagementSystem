@@ -4,15 +4,24 @@
   "type": "module",
   "scripts": {
     "start": "node src/app.js",
-    "dev": "node --watch src/app.js"
+    "dev": "node --watch src/app.js",
+    "db:migrate": "node db/migrate.js",
+    "db:seed": "node db/seed.js",
+    "test": "node --import ./src/test/registerEnv.js --test --test-concurrency=1 src/test/unit/*.test.js src/test/integration/*.test.js"
   },
   "dependencies": {
+    "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.44.2",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^10.1.1",
     "pg": "^8.16.0",
     "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.11",
+    "supertest": "^7.3.1"
   }
 }

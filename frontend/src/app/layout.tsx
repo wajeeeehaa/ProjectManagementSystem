@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Providers } from '../lib/Providers';
+import './globals.css';
 
 export const metadata = {
   title: 'Project Management System',

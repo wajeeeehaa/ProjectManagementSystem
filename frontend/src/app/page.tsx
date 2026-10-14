@@ -8,12 +8,12 @@ import type { RootState } from '../lib/store';
 export default function HomePage() {
   const router = useRouter();
   const authReady = useSelector((state: RootState) => state.auth.authReady);
+  const isAuthenticated = useSelector((state: RootState) => state.auth.isAuthenticated);
 
   useEffect(() => {
-    if (authReady) {
-      router.replace('/login');
-    }
-  }, [authReady, router]);
+    if (!authReady) return;
+    router.replace(isAuthenticated ? '/dashboard' : '/login');
+  }, [authReady, isAuthenticated, router]);
 
-  return null;
+  return <p className="status-line">Loading…</p>;
 }

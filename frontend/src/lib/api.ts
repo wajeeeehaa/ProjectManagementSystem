@@ -1,5 +1,9 @@
-import { clearAccessToken, getAccessToken } from './token';
+import { signedOut } from './authSlice';
+import { getCsrfToken } from './csrf';
+import { refreshWithLock } from './refreshLock';
 import { storeSessionExpiredMessage } from './session';
+import { REFRESH_PATH, shouldAttemptRefresh } from './sessionPolicy';
+import { store } from './store';
 
 type IssueMessage = {
   message?: unknown;
@@ -12,6 +16,13 @@ type Envelope = {
   data: unknown;
 };
 
+type RequestOptions = RequestInit & {
+  retry?: boolean;
+  redirectOnUnauthorized?: boolean;
+};
+
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
 export class ApiError extends Error {
   statusCode: number;
 
@@ -22,40 +33,77 @@ export class ApiError extends Error {
   }
 }
 
-function messageFromEnvelope(message: unknown): string {
+export function messageFromEnvelope(message: unknown): string {
   if (Array.isArray(message)) {
-    const first = message[0] as IssueMessage | undefined;
-    if (first && typeof first.message === 'string') {
-      return first.message;
-    }
+    const messages = message
+      .map((issue) => {
+        const value = issue as IssueMessage;
+        return typeof value.message === 'string' ? value.message : '';
+      })
+      .filter(Boolean);
+    if (messages.length > 0) return messages.join(' ');
   }
 
-  if (typeof message === 'string' && message.trim()) {
-    return message;
-  }
-
+  if (typeof message === 'string' && message.trim()) return message;
   return 'Request failed';
 }
 
-export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL?.trim() ?? '';
-  if (!baseUrl) {
-    throw new Error('NEXT_PUBLIC_API_URL is empty');
-  }
+function apiBaseUrl(): string {
+  return (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/$/, '');
+}
 
-  const headers = new Headers(init.headers);
-  const token = getAccessToken();
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function postRefresh(): Promise<boolean> {
+  const headers = new Headers();
+  const csrf = getCsrfToken();
+  if (csrf) headers.set('X-CSRF-Token', csrf);
+  try {
+    const response = await fetch(`${apiBaseUrl()}${REFRESH_PATH}`, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+    });
+    return response.ok;
+  } catch {
+    return false;
   }
+}
+
+function refreshSession(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = refreshWithLock(postRefresh).finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { retry = true, redirectOnUnauthorized = false, ...init } = options;
+  const method = (init.method ?? 'GET').toUpperCase();
+  const headers = new Headers(init.headers);
   if (init.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
+  if (UNSAFE_METHODS.has(method)) {
+    const csrf = getCsrfToken();
+    if (csrf && !headers.has('X-CSRF-Token')) {
+      headers.set('X-CSRF-Token', csrf);
+    }
+  }
 
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl()}${path}`, {
+      ...init,
+      method,
+      headers,
+      credentials: 'include',
+    });
+  } catch {
+    throw new ApiError('Unable to reach the server', 0);
+  }
 
   let body: Envelope | null = null;
   try {
@@ -64,20 +112,23 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     body = null;
   }
 
-  if (response.status === 401) {
-    clearAccessToken();
-    storeSessionExpiredMessage();
-    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-      window.location.assign('/login');
+  if (shouldAttemptRefresh(path, response.status, retry)) {
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      return apiRequest<T>(path, { ...options, retry: false });
+    }
+    if (redirectOnUnauthorized && typeof window !== 'undefined') {
+      storeSessionExpiredMessage();
+      store.dispatch(signedOut());
+      if (window.location.pathname !== '/login') {
+        window.location.assign('/login');
+      }
     }
     throw new ApiError(messageFromEnvelope(body?.message), 401);
   }
 
   if (!response.ok || !body?.success) {
-    throw new ApiError(
-      messageFromEnvelope(body?.message),
-      body?.statusCode ?? response.status,
-    );
+    throw new ApiError(messageFromEnvelope(body?.message), body?.statusCode ?? response.status);
   }
 
   return body.data as T;

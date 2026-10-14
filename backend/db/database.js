@@ -7,7 +7,15 @@ const { Pool } = pkg;
 
 const connectionString = process.env.DATABASE_URL?.trim() ?? '';
 
-export const pool = connectionString ? new Pool({ connectionString }) : null;
+export const pool = connectionString
+  ? new Pool({ connectionString, connectionTimeoutMillis: 5000 })
+  : null;
+
+if (pool) {
+  pool.on('error', (error) => {
+    console.error('[db] pool error', error);
+  });
+}
 
 export const db = pool ? drizzle(pool, { schema }) : null;
 
