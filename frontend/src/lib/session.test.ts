@@ -22,9 +22,10 @@ describe('auth session helpers', () => {
 
   it('sends anonymous users to login and signed-in users away from public auth pages', () => {
     expect(resolveAuthRedirect('/', false)).toBe('/login');
-    expect(resolveAuthRedirect('/', true)).toBe('/dashboard');
+    expect(resolveAuthRedirect('/', true)).toBe('/workspaces');
     expect(resolveAuthRedirect('/dashboard', false)).toBe('/login');
-    expect(resolveAuthRedirect('/login', true)).toBe('/dashboard');
+    expect(resolveAuthRedirect('/workspaces/123', false)).toBe('/login');
+    expect(resolveAuthRedirect('/login', true)).toBe('/workspaces');
     expect(resolveAuthRedirect('/verify', true)).toBeNull();
     expect(resolveAuthRedirect('/reset-password', false)).toBeNull();
   });

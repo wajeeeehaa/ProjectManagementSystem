@@ -1,6 +1,6 @@
 # Project Management System
 
-Account authentication for a same-origin Next.js frontend and Express API. Workspace ownership is not implemented here. Every account receives the global role `user`; Owner, Admin, and Member permissions will be enforced later from workspace membership, not from this global role.
+Account authentication and workspace membership for a same-origin Next.js frontend and Express API. Every account receives the global role `user`; Owner, Admin, and Member permissions are enforced from workspace membership, not from this global role.
 
 ## Architecture
 
@@ -35,7 +35,17 @@ npm run db:seed
 npm run dev
 ```
 
-`db:seed` is idempotent and ensures the global `user` role. Migration `0000_auth` also inserts that role.
+`db:seed` is idempotent. It ensures the global `user` role, then creates verified Gmail-style test accounts, two workspaces, projects, and tasks. Every seed account uses the password `ChangeMe!12345`. Running the seed again resets that password for these accounts only.
+
+| Email | Seed Delivery | Seed Research |
+|---|---|---|
+| `wajeeha.owner@gmail.com` | Owner | |
+| `wajeeha.admin@gmail.com` | Admin | Admin |
+| `wajeeha.member1@gmail.com` | Member | Owner |
+| `wajeeha.member2@gmail.com` | Member | Member |
+| `wajeeha.member3@gmail.com` | | Member |
+
+Tasks are assigned only to Members. Migration `0000_auth` also inserts the global `user` role. Migration `0001_workspaces` creates workspace and membership tables. Migration `0002_projects_tasks` creates projects and tasks.
 
 ```bash
 cd frontend
@@ -43,7 +53,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`. Register, open the activation link from the SMTP inbox, then log in. Reloading the dashboard calls `GET /api/auth/me` with the access cookie. When that token expires, the client sends one `POST /api/auth/refresh-token` request, including the CSRF header, and retries the original request.
+Open `http://localhost:3000`. Register, open the activation link from the SMTP inbox, then log in. Create a workspace from the workspace screen and add already-registered users by email. Reloading the page calls `GET /api/auth/me` with the access cookie. When that token expires, the client sends one `POST /api/auth/refresh-token` request, including the CSRF header, and retries the original request.
 
 ## Production
 
@@ -57,7 +67,20 @@ CORS remains limited to `CORS_ORIGINS`, allows `Authorization` and `X-CSRF-Token
 
 ## Authorization
 
-`authentication` accepts a bearer access token, otherwise the access cookie. It rejects blacklisted, expired, malformed, or non-access tokens, missing users, and revoked or replaced sessions. `authorization(['permission-title'])` then allows the request when the user's global role has any one of the named permissions. An empty permission list is denied. This global check does not grant workspace Owner, Admin, or Member access.
+`authentication` accepts a bearer access token, otherwise the access cookie. It rejects blacklisted, expired, malformed, or non-access tokens, missing users, and revoked or replaced sessions. `authorization(['permission-title'])` then allows the request when the user's global role has any one of the named permissions. An empty permission list is denied.
+
+Workspace routes use a separate membership check. Each workspace has one Owner; the creator becomes Owner in the same transaction that creates the workspace. Owners can update/delete the workspace and transfer ownership. Admins can add, remove, and change the `admin`/`member` role of non-owner members. Members have read-only access. The Owner cannot be removed or demoted; transfer ownership first. Workspace APIs live under `/api/workspaces`, and cookie-authenticated mutations require the CSRF header.
+
+## Projects and tasks
+
+Projects belong to one workspace. Tasks belong to one project and require a title, assignee, due date, status (`TODO`, `IN_PROGRESS`, or `DONE`), priority (`LOW`, `MEDIUM`, or `HIGH`), creator, timestamps, and optimistic-lock `version`.
+
+- Owner and Admin can create, edit, and delete projects and tasks.
+- Members can view workspace projects/tasks and only update `status` on tasks assigned to them.
+- A new task assignee, and any change of assignee, must be a user whose current role in that workspace is Member. An Owner or Admin cannot be newly assigned. If an assigned Member is later promoted, that existing assignment stays in place until the assignee is changed.
+- `GET /api/workspaces/:workspaceId/projects/:projectId/tasks` supports `search`, `status`, `priority`, `assigneeId`, `sortBy` (`createdAt`, `updatedAt`, `dueDate`, `priority`, `title`), `sortDirection`, `page`, and `pageSize` (1–100). Responses include `items` plus pagination metadata.
+- Project detail responses include task totals by status. The migration indexes workspace/project lookup, project task ordering, status/priority filtering, assignee filtering, and due dates.
+- Task updates must submit the current `version`. Updates use `id + version` matching and return `409 Conflict` when another change has already advanced the version; reload the task before retrying.
 
 ## Tests
 

@@ -2,7 +2,9 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
+  foreignKey,
   index,
+  integer,
   pgTable,
   primaryKey,
   text,
@@ -76,6 +78,113 @@ export const users = pgTable(
     check('users_email_lowercase', sql`${table.email} = lower(${table.email})`),
     check('users_first_name_not_blank', sql`char_length(btrim(${table.firstName})) > 0`),
     check('users_last_name_not_blank', sql`char_length(btrim(${table.lastName})) > 0`),
+  ],
+);
+
+export const workspaces = pgTable(
+  'workspaces',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('workspaces_created_by_idx').on(table.createdBy),
+    check('workspaces_name_not_blank', sql`char_length(btrim(${table.name})) > 0`),
+  ],
+);
+
+export const workspaceMembers = pgTable(
+  'workspace_members',
+  {
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: text('role').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.userId] }),
+    index('workspace_members_user_id_idx').on(table.userId),
+    index('workspace_members_workspace_id_role_idx').on(table.workspaceId, table.role),
+    uniqueIndex('workspace_members_one_owner_per_workspace')
+      .on(table.workspaceId)
+      .where(sql`${table.role} = 'owner'`),
+    check(
+      'workspace_members_role_valid',
+      sql`${table.role} IN ('owner', 'admin', 'member')`,
+    ),
+  ],
+);
+
+export const projects = pgTable(
+  'projects',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description'),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('projects_workspace_id_id_unique').on(table.workspaceId, table.id),
+    index('projects_workspace_id_created_at_idx').on(table.workspaceId, table.createdAt),
+    check('projects_name_not_blank', sql`char_length(btrim(${table.name})) > 0`),
+  ],
+);
+
+export const tasks = pgTable(
+  'tasks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id').notNull(),
+    title: text('title').notNull(),
+    description: text('description'),
+    status: text('status').notNull().default('TODO'),
+    priority: text('priority').notNull().default('MEDIUM'),
+    assigneeId: uuid('assignee_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    dueDate: timestamp('due_date', { withTimezone: true }).notNull(),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    version: integer('version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.workspaceId, table.projectId],
+      foreignColumns: [projects.workspaceId, projects.id],
+      name: 'tasks_project_workspace_fk',
+    }).onDelete('cascade'),
+    index('tasks_project_id_created_at_idx').on(table.projectId, table.createdAt),
+    index('tasks_project_id_status_idx').on(table.projectId, table.status),
+    index('tasks_project_id_priority_idx').on(table.projectId, table.priority),
+    index('tasks_workspace_id_assignee_id_idx').on(table.workspaceId, table.assigneeId),
+    index('tasks_project_id_due_date_idx').on(table.projectId, table.dueDate),
+    check('tasks_title_not_blank', sql`char_length(btrim(${table.title})) > 0`),
+    check('tasks_status_valid', sql`${table.status} IN ('TODO', 'IN_PROGRESS', 'DONE')`),
+    check('tasks_priority_valid', sql`${table.priority} IN ('LOW', 'MEDIUM', 'HIGH')`),
+    check('tasks_version_positive', sql`${table.version} > 0`),
   ],
 );
 

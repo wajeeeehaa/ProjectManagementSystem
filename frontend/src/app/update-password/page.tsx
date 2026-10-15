@@ -4,8 +4,10 @@ import { FormEvent, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useDispatch } from 'react-redux';
+import { AppShell } from '../../components/AppShell';
 import { AuthGuard } from '../../components/AuthGuard';
-import { AuthShell, Field, FormMessage } from '../../components/AuthShell';
+import { Field, FormMessage } from '../../components/AuthShell';
+import { Card } from '../../components/ui/Card';
 import { ApiError, apiRequest } from '../../lib/api';
 import { signedOut } from '../../lib/authSlice';
 import { isStrongPassword, PASSWORD_RULE_MESSAGE } from '../../lib/passwordPolicy';
@@ -55,16 +57,26 @@ function UpdatePasswordForm() {
   }
 
   return (
-    <AuthShell title="Change password">
-      <form onSubmit={onSubmit} aria-busy={pending} noValidate>
-        <Field id="oldPassword" label="Current password" type="password" autoComplete="current-password" value={oldPassword} onChange={setOldPassword} errorId={error ? 'update-error' : undefined} />
-        <Field id="password" label="New password" type="password" autoComplete="new-password" value={password} onChange={setPassword} errorId={error ? 'update-error' : undefined} />
-        <Field id="confirmPassword" label="Confirm password" type="password" autoComplete="new-password" value={confirmPassword} onChange={setConfirmPassword} errorId={error ? 'update-error' : undefined} />
-        {error ? <FormMessage id="update-error" tone="error">{error}</FormMessage> : null}
-        <button type="submit" disabled={pending}>{pending ? 'Saving…' : 'Update password'}</button>
-      </form>
-      <p className="auth-links"><Link href="/dashboard">Back to dashboard</Link></p>
-    </AuthShell>
+    <AppShell>
+      <div className="page-content account-form">
+        <Link className="back-link" href="/dashboard">← Account</Link>
+        <header className="page-header">
+          <div>
+            <h1>Change password</h1>
+            <p>Use your current password to set a new one.</p>
+          </div>
+        </header>
+        <Card>
+          <form onSubmit={onSubmit} aria-busy={pending} noValidate>
+            <Field id="oldPassword" label="Current password" type="password" autoComplete="current-password" value={oldPassword} onChange={setOldPassword} errorId={error ? 'update-error' : undefined} />
+            <Field id="password" label="New password" type="password" autoComplete="new-password" value={password} onChange={setPassword} errorId={error ? 'update-error' : undefined} />
+            <Field id="confirmPassword" label="Confirm password" type="password" autoComplete="new-password" value={confirmPassword} onChange={setConfirmPassword} errorId={error ? 'update-error' : undefined} />
+            {error ? <FormMessage id="update-error" tone="error">{error}</FormMessage> : null}
+            <button type="submit" disabled={pending}>{pending ? 'Saving…' : 'Update password'}</button>
+          </form>
+        </Card>
+      </div>
+    </AppShell>
   );
 }
 

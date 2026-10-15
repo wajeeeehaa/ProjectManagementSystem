@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useDispatch } from 'react-redux';
 import { AuthGuard } from '../../components/AuthGuard';
-import { AuthShell, Field, FormMessage } from '../../components/AuthShell';
 import { ApiError, apiRequest } from '../../lib/api';
 import { signedIn, type AuthUser } from '../../lib/authSlice';
 import { consumeAuthNotice, consumeSessionExpiredMessage } from '../../lib/session';
@@ -19,6 +18,7 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [status, setStatus] = useState('Verifying email and password…');
 
   useEffect(() => {
     setNotice(consumeSessionExpiredMessage() ?? consumeAuthNotice());
@@ -33,6 +33,7 @@ function LoginForm() {
       return;
     }
 
+    setStatus('Verifying email and password…');
     setPending(true);
     try {
       const data = await apiRequest<{ user: AuthUser }>('/api/auth/login', {
@@ -40,30 +41,70 @@ function LoginForm() {
         body: JSON.stringify({ email, password }),
         retry: false,
       });
+      setStatus('Loading your business account…');
       dispatch(signedIn(data.user));
-      router.replace('/dashboard');
+      router.replace('/workspaces');
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'Unable to reach the server');
-    } finally {
       setPending(false);
     }
   }
 
   return (
-    <AuthShell title="Log in">
-      {notice ? <FormMessage tone="notice">{notice}</FormMessage> : null}
-      <form onSubmit={onSubmit} aria-busy={pending} noValidate>
-        <Field id="email" label="Email" type="email" autoComplete="email" value={email} onChange={setEmail} errorId={error ? 'login-error' : undefined} />
-        <Field id="password" label="Password" type="password" autoComplete="current-password" value={password} onChange={setPassword} errorId={error ? 'login-error' : undefined} />
-        {error ? <FormMessage id="login-error" tone="error">{error}</FormMessage> : null}
-        <button type="submit" disabled={pending}>{pending ? 'Logging in…' : 'Log in'}</button>
-      </form>
-      <nav className="auth-links" aria-label="Account help">
-        <Link href="/register">Create an account</Link>
-        <Link href="/forgot-password">Forgot password</Link>
-        <Link href="/resend-activation">Resend activation link</Link>
-      </nav>
-    </AuthShell>
+    <main className="sign-in-page">
+      <section className="sign-in-card">
+        <header className="sign-in-header">
+          <h1>Sign in</h1>
+          <p>Access your business dashboard</p>
+        </header>
+        <form className="sign-in-form" onSubmit={onSubmit} aria-busy={pending} noValidate>
+          {notice ? <p className="sign-in-notice" role="status">{notice}</p> : null}
+          <div className="sign-in-field">
+            <label htmlFor="email">Email</label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              autoComplete="email"
+              placeholder="you@example.com"
+              value={email}
+              disabled={pending}
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? 'login-error' : undefined}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+            />
+          </div>
+          <div className="sign-in-field">
+            <label htmlFor="password">Password</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              disabled={pending}
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? 'login-error' : undefined}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+            />
+          </div>
+          {error ? <p id="login-error" className="sign-in-error" role="alert">{error}</p> : null}
+          <button className="sign-in-button" type="submit" disabled={pending}>
+            {pending ? (
+              <>
+                <span className="sign-in-spinner" aria-hidden="true" />
+                <span className="sign-in-status">{status}</span>
+              </>
+            ) : (
+              'Sign in'
+            )}
+          </button>
+        </form>
+        <p className="auth-switch">Don&apos;t have an account? <Link href="/register">Register Now</Link></p>
+      </section>
+    </main>
   );
 }
 

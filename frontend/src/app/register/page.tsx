@@ -62,7 +62,7 @@ function RegisterForm() {
         {success ? <FormMessage tone="success">{success}</FormMessage> : null}
         <button type="submit" disabled={pending}>{pending ? 'Creating account…' : 'Create account'}</button>
       </form>
-      <p className="auth-links"><Link href="/login">Back to login</Link></p>
+      <p className="auth-switch">Already have an account? <Link href="/login">Sign in</Link></p>
     </AuthShell>
   );
 }

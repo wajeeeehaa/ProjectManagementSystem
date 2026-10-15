@@ -25,7 +25,11 @@ export function AuthGuard({
   }, [redirectTo, router]);
 
   if (!authReady || redirectTo) {
-    return <p className="status-line">Loading…</p>;
+    return (
+      <div className="session-screen" role="status" aria-live="polite">
+        <span className="session-spinner" aria-label="Loading" />
+      </div>
+    );
   }
 
   return children;

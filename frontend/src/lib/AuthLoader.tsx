@@ -34,7 +34,11 @@ export function AuthLoader({ children }: { children: ReactNode }) {
   }, [dispatch]);
 
   if (!authReady) {
-    return <p className="status-line">Loading your session…</p>;
+    return (
+      <div className="session-screen" role="status" aria-live="polite">
+        <span className="session-spinner" aria-label="Loading your session" />
+      </div>
+    );
   }
 
   return children;

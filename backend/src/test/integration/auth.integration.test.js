@@ -175,6 +175,248 @@ dbTest('registers, verifies, and logs in with scoped cookies', async () => {
   assert.equal(me.body.data.email, email);
 });
 
+dbTest('enforces workspace membership roles and ownership transfer', async () => {
+  await registerVerify('owner@example.com');
+  await registerVerify('admin@example.com');
+  await registerVerify('member@example.com');
+
+  const owner = await login('owner@example.com');
+  const ownerCookie = [owner.access.split(';')[0], owner.csrf.split(';')[0]].join('; ');
+  const ownerCsrf = cookieValue(owner.csrf);
+  const created = await request(app)
+    .post('/api/workspaces')
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ name: 'Product team' });
+  assert.equal(created.status, 201);
+  const workspaceId = created.body.data.id;
+
+  const addedAdmin = await request(app)
+    .post(`/api/workspaces/${workspaceId}/members`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ email: 'admin@example.com', role: 'admin' });
+  assert.equal(addedAdmin.status, 201);
+
+  const admin = await login('admin@example.com');
+  const adminCookie = [admin.access.split(';')[0], admin.csrf.split(';')[0]].join('; ');
+  const adminCsrf = cookieValue(admin.csrf);
+  const workspaceSettings = await request(app)
+    .patch(`/api/workspaces/${workspaceId}`)
+    .set('Cookie', adminCookie)
+    .set('X-CSRF-Token', adminCsrf)
+    .send({ name: 'Nope' });
+  assert.equal(workspaceSettings.status, 403);
+
+  const addedMember = await request(app)
+    .post(`/api/workspaces/${workspaceId}/members`)
+    .set('Cookie', adminCookie)
+    .set('X-CSRF-Token', adminCsrf)
+    .send({ email: 'member@example.com', role: 'member' });
+  assert.equal(addedMember.status, 201);
+
+  const transfer = await request(app)
+    .post(`/api/workspaces/${workspaceId}/transfer-ownership`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ userId: addedAdmin.body.data.userId });
+  assert.equal(transfer.status, 200);
+
+  const formerOwnerDelete = await request(app)
+    .delete(`/api/workspaces/${workspaceId}`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf);
+  assert.equal(formerOwnerDelete.status, 403);
+
+  const deleted = await request(app)
+    .delete(`/api/workspaces/${workspaceId}`)
+    .set('Cookie', adminCookie)
+    .set('X-CSRF-Token', adminCsrf);
+  assert.equal(deleted.status, 200);
+});
+
+dbTest('enforces project task roles, queries, and optimistic locking', async () => {
+  await registerVerify('project-owner@example.com');
+  await registerVerify('project-admin@example.com');
+  await registerVerify('project-member@example.com');
+  const owner = await login('project-owner@example.com');
+  const ownerCookie = [owner.access.split(';')[0], owner.csrf.split(';')[0]].join('; ');
+  const ownerCsrf = cookieValue(owner.csrf);
+  const workspace = await request(app)
+    .post('/api/workspaces')
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ name: 'Delivery' });
+  const workspaceId = workspace.body.data.id;
+
+  await request(app)
+    .post(`/api/workspaces/${workspaceId}/members`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ email: 'project-admin@example.com', role: 'admin' });
+  const addedMember = await request(app)
+    .post(`/api/workspaces/${workspaceId}/members`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ email: 'project-member@example.com', role: 'member' });
+
+  const project = await request(app)
+    .post(`/api/workspaces/${workspaceId}/projects`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ name: 'Launch', description: 'Release planning' });
+  assert.equal(project.status, 201);
+  const projectId = project.body.data.id;
+
+  const firstTask = await request(app)
+    .post(`/api/workspaces/${workspaceId}/projects/${projectId}/tasks`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({
+      title: 'Prepare release notes',
+      assigneeId: addedMember.body.data.userId,
+      dueDate: '2026-12-01',
+      priority: 'HIGH',
+    });
+  assert.equal(firstTask.status, 201);
+  assert.equal(firstTask.body.data.version, 1);
+
+  const member = await login('project-member@example.com');
+  const memberCookie = [member.access.split(';')[0], member.csrf.split(';')[0]].join('; ');
+  const memberCsrf = cookieValue(member.csrf);
+  const forbidden = await request(app)
+    .patch(`/api/workspaces/${workspaceId}/projects/${projectId}/tasks/${firstTask.body.data.id}`)
+    .set('Cookie', memberCookie)
+    .set('X-CSRF-Token', memberCsrf)
+    .send({ priority: 'LOW', version: 1 });
+  assert.equal(forbidden.status, 403);
+
+  const statusUpdate = await request(app)
+    .patch(`/api/workspaces/${workspaceId}/projects/${projectId}/tasks/${firstTask.body.data.id}`)
+    .set('Cookie', memberCookie)
+    .set('X-CSRF-Token', memberCsrf)
+    .send({ status: 'IN_PROGRESS', version: 1 });
+  assert.equal(statusUpdate.status, 200);
+  assert.equal(statusUpdate.body.data.version, 2);
+
+  const stale = await request(app)
+    .patch(`/api/workspaces/${workspaceId}/projects/${projectId}/tasks/${firstTask.body.data.id}`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ title: 'Stale update', version: 1 });
+  assert.equal(stale.status, 409);
+
+  const secondTask = await request(app)
+    .post(`/api/workspaces/${workspaceId}/projects/${projectId}/tasks`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({
+      title: 'Prepare launch email',
+      assigneeId: addedMember.body.data.userId,
+      dueDate: '2026-11-20',
+      status: 'TODO',
+    });
+  assert.equal(secondTask.status, 201);
+
+  const filtered = await request(app)
+    .get(`/api/workspaces/${workspaceId}/projects/${projectId}/tasks?search=launch&status=TODO&sortBy=dueDate&sortDirection=asc&page=1&pageSize=1`)
+    .set('Cookie', ownerCookie);
+  assert.equal(filtered.status, 200);
+  assert.equal(filtered.body.data.items.length, 1);
+  assert.equal(filtered.body.data.items[0].id, secondTask.body.data.id);
+  assert.equal(filtered.body.data.pagination.total, 1);
+
+  const detail = await request(app).get(`/api/workspaces/${workspaceId}/projects/${projectId}`).set('Cookie', ownerCookie);
+  assert.equal(detail.body.data.statistics.total, 2);
+  assert.equal(detail.body.data.statistics.todo, 1);
+  assert.equal(detail.body.data.statistics.inProgress, 1);
+});
+
+dbTest('assigns tasks only to current workspace members', async () => {
+  await registerVerify('assign-owner@example.com');
+  await registerVerify('assign-admin@example.com');
+  await registerVerify('assign-member@example.com');
+  const owner = await login('assign-owner@example.com');
+  const ownerCookie = [owner.access.split(';')[0], owner.csrf.split(';')[0]].join('; ');
+  const ownerCsrf = cookieValue(owner.csrf);
+  const workspace = await request(app)
+    .post('/api/workspaces')
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ name: 'Assignments' });
+  const workspaceId = workspace.body.data.id;
+  const addedAdmin = await request(app)
+    .post(`/api/workspaces/${workspaceId}/members`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ email: 'assign-admin@example.com', role: 'admin' });
+  const addedMember = await request(app)
+    .post(`/api/workspaces/${workspaceId}/members`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ email: 'assign-member@example.com', role: 'member' });
+  const project = await request(app)
+    .post(`/api/workspaces/${workspaceId}/projects`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ name: 'Assignment rules' });
+  const projectId = project.body.data.id;
+  const memberList = await request(app)
+    .get(`/api/workspaces/${workspaceId}/members`)
+    .set('Cookie', ownerCookie);
+  const ownerId = memberList.body.data.find((member) => member.role === 'owner').userId;
+  const taskUrl = `/api/workspaces/${workspaceId}/projects/${projectId}/tasks`;
+  const taskBody = (assigneeId) => ({
+    title: 'Assign work',
+    assigneeId,
+    dueDate: '2026-12-01',
+  });
+
+  const ownerAssignee = await request(app)
+    .post(taskUrl)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send(taskBody(ownerId));
+  assert.equal(ownerAssignee.status, 400);
+
+  const adminAssignee = await request(app)
+    .post(taskUrl)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send(taskBody(addedAdmin.body.data.userId));
+  assert.equal(adminAssignee.status, 400);
+
+  const created = await request(app)
+    .post(taskUrl)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send(taskBody(addedMember.body.data.userId));
+  assert.equal(created.status, 201);
+
+  const reassigned = await request(app)
+    .patch(`${taskUrl}/${created.body.data.id}`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ assigneeId: addedAdmin.body.data.userId, version: 1 });
+  assert.equal(reassigned.status, 400);
+
+  const promoted = await request(app)
+    .patch(`/api/workspaces/${workspaceId}/members/${addedMember.body.data.userId}`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ role: 'admin' });
+  assert.equal(promoted.status, 200);
+
+  const kept = await request(app)
+    .patch(`${taskUrl}/${created.body.data.id}`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ title: 'Still assigned', assigneeId: addedMember.body.data.userId, version: 1 });
+  assert.equal(kept.status, 200);
+  assert.equal(kept.body.data.assigneeId, addedMember.body.data.userId);
+  assert.equal(kept.body.data.version, 2);
+});
+
 dbTest('rotates refresh sessions and revokes the family when an old token is replayed', async () => {
   const email = 'refresh@example.com';
   await registerVerify(email);

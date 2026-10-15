@@ -8,6 +8,20 @@
       "when": 1760433600000,
       "tag": "0000_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791995880000,
+      "tag": "0001_workspaces",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791999480000,
+      "tag": "0002_projects_tasks",
+      "breakpoints": true
     }
   ]
 }
