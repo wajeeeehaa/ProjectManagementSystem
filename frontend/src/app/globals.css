@@ -121,6 +121,10 @@ button:disabled {
   color: #0b3f73;
 }
 
+.page-content > .form-message {
+  margin-bottom: 1rem;
+}
+
 .auth-links,
 .dashboard-actions {
   display: flex;
@@ -399,7 +403,15 @@ a.ui-button { display: inline-flex; align-items: center; justify-content: center
 .project-card { display: flex; min-height: 8rem; flex-direction: column; justify-content: space-between; gap: 1rem; padding: 1.25rem; border: 1px solid #e1e7ef; border-radius: 12px; color: #0f172a; text-decoration: none; transition: border-color 150ms, background-color 150ms; }
 .project-card:hover { border-color: #5e54e8; background: #fafaff; }.project-card h3, .project-card p { margin: 0; }.project-card p { margin-top: .4rem; color: #64748b; font-size: .875rem; }.project-card > span { color: #5e54e8; font-size: .875rem; font-weight: 600; }
 .compact { padding: 1.5rem 0 .5rem; }.header-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
-.stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; }.stats-grid .ui-card { display: grid; gap: .3rem; margin: 0; padding: 1.25rem; }.stats-grid span { color: #64748b; font-size: .8rem; }.stats-grid strong { font-size: 1.6rem; }
+.stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+.stats-grid small { color: #047857; font-size: 0.75rem; font-weight: 600; }
+.priority-group { display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.progress-chip { display: inline-flex; border-radius: 9999px; padding: 0.22rem 0.6rem; background: #ecfdf5; color: #047857; font-size: 0.75rem; font-weight: 600; white-space: nowrap; }.stats-grid .ui-card { display: grid; gap: .3rem; margin: 0; padding: 1.25rem; }.stats-grid span { color: #64748b; font-size: .8rem; }.stats-grid strong { font-size: 1.6rem; }
+.assignee-field { display: grid; gap: 0.35rem; color: #0f172a; font-size: 14px; font-weight: 500; }
+.assignee-list { display: grid; gap: 4px; max-height: 160px; overflow: auto; padding: 8px; border: 1px solid #e1e7ef; border-radius: 6px; background: #ffffff; }
+.assignee-list-error { border-color: #ef4343; }
+.task-form .assignee-option { display: flex; align-items: center; gap: 8px; color: #0f172a; font-size: 14px; font-weight: 400; cursor: pointer; }
+.task-form .assignee-option input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; flex: 0 0 16px; margin: 0; padding: 0; border-radius: 4px; accent-color: #5e54e8; }
 .task-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }.task-form label { display: grid; gap: .35rem; color: #334155; font-size: .875rem; font-weight: 500; }.task-form select, .task-filters select, .task-form textarea { width: 100%; min-height: 2.75rem; padding: .6rem .75rem; border: 1px solid #e1e7ef; border-radius: 12px; background: white; color: #0f172a; font: inherit; }.task-form textarea { min-height: 6rem; resize: vertical; }.task-form input:focus, .task-form select:focus, .task-form textarea:focus, .task-filters select:focus { outline: 0; border-color: #5e54e8; box-shadow: 0 0 0 3px rgb(94 84 232 / 20%); }.form-span { grid-column: 1 / -1; }
 .task-list-card { padding: 0; overflow: hidden; }.task-list-card > .card-heading, .task-list-card > .task-filters { padding: 1.25rem 1.5rem 0; }.task-filters { display: grid; grid-template-columns: minmax(12rem, 1.5fr) repeat(4, minmax(8rem, 1fr)); gap: .75rem; padding-bottom: 1.25rem !important; }.task-filters input { min-height: 2.75rem; }
 .task-table-wrap { overflow-x: auto; border-top: 1px solid #e1e7ef; box-shadow: 0 1px 2px rgb(0 0 0 / 0.05); }.task-table-wrap table { width: 100%; border-collapse: collapse; min-width: 48rem; }.task-table-wrap th { padding: .65rem 1rem; background: rgb(241 245 249 / 50%); color: #65758b; font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-align: left; text-transform: uppercase; }.task-table-wrap td { padding: .9rem 1rem; border-top: 1px solid #f1f5f9; font-size: .875rem; vertical-align: middle; }.task-table-wrap td small { display: block; max-width: 18rem; margin-top: .2rem; overflow: hidden; color: #64748b; text-overflow: ellipsis; white-space: nowrap; }.task-actions { display: flex; gap: .4rem; }

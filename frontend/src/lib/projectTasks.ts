@@ -18,12 +18,25 @@ export type Project = {
   creator: Person;
 };
 
+export type AssigneeProgress = {
+  userId: string;
+  firstName: string;
+  lastName: string;
+  total: number;
+  todo: number;
+  inProgress: number;
+  done: number;
+  progress: number;
+};
+
 export type ProjectDetail = Project & {
   statistics: {
     total: number;
     todo: number;
     inProgress: number;
     done: number;
+    progress: number;
+    byAssignee: AssigneeProgress[];
   };
 };
 
@@ -38,6 +51,7 @@ export type Task = {
   description: string | null;
   status: TaskStatus;
   priority: TaskPriority;
+  progress: number;
   assigneeId: string;
   dueDate: string;
   createdBy: string;
@@ -45,6 +59,7 @@ export type Task = {
   createdAt: string;
   updatedAt: string;
   assignee: Person;
+  assignees: Person[];
   creator: Person;
 };
 
@@ -92,5 +107,20 @@ export const taskQueryString = (query: TaskQuery) => {
 export const projectPath = (workspaceId: string, projectId: string) =>
   `/workspaces/${workspaceId}/projects/${projectId}`;
 
+export const taskAssigneeIds = (task: Pick<Task, 'assigneeId' | 'assignees'>) => {
+  const ids = task.assignees?.map((person) => person.id) ?? [];
+  if (ids.length === 0) return [task.assigneeId];
+  return [task.assigneeId, ...ids.filter((id) => id !== task.assigneeId)];
+};
+
+export const assigneeLabel = (task: Pick<Task, 'assigneeId' | 'assignee' | 'assignees'>) => {
+  const people = task.assignees?.length ? task.assignees : [task.assignee];
+  const ordered = [
+    ...people.filter((person) => person.id === task.assigneeId),
+    ...people.filter((person) => person.id !== task.assigneeId),
+  ];
+  return ordered.map((person) => `${person.firstName} ${person.lastName}`).join(', ');
+};
+
 export const canEditTask = (role: WorkspaceRole, task: Task, userId?: string) =>
-  role === 'owner' || role === 'admin' || (role === 'member' && task.assigneeId === userId);
+  role === 'owner' || role === 'admin' || (role === 'member' && Boolean(userId) && taskAssigneeIds(task).includes(userId));

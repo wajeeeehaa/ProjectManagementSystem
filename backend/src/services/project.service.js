@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { db } from '../../db/database.js';
-import { projects, tasks, users } from '../../db/schema/index.js';
+import { projects, taskAssignees, tasks, users } from '../../db/schema/index.js';
 import { HTTP_STATUS } from '../utils/constants.js';
 import { HttpError } from '../utils/httpError.js';
 
@@ -60,17 +60,59 @@ export const getProject = async (workspaceId, projectId) => {
   return project;
 };
 
+const countValue = (value) => Number(value ?? 0);
+const averageProgress = (value) => Math.round(countValue(value));
+
 export const getProjectStatistics = async (workspaceId, projectId) => {
-  const [statistics] = await requireDb()
-    .select({
-      total: sql`count(*)::int`,
-      todo: sql`count(*) filter (where ${tasks.status} = 'TODO')::int`,
-      inProgress: sql`count(*) filter (where ${tasks.status} = 'IN_PROGRESS')::int`,
-      done: sql`count(*) filter (where ${tasks.status} = 'DONE')::int`,
-    })
-    .from(tasks)
-    .where(and(eq(tasks.workspaceId, workspaceId), eq(tasks.projectId, projectId)));
-  return statistics ?? { total: 0, todo: 0, inProgress: 0, done: 0 };
+  const database = requireDb();
+  const where = and(eq(tasks.workspaceId, workspaceId), eq(tasks.projectId, projectId));
+  const [statistics, byAssignee] = await Promise.all([
+    database
+      .select({
+        total: sql`count(*)::int`,
+        todo: sql`count(*) filter (where ${tasks.status} = 'TODO')::int`,
+        inProgress: sql`count(*) filter (where ${tasks.status} = 'IN_PROGRESS')::int`,
+        done: sql`count(*) filter (where ${tasks.status} = 'DONE')::int`,
+        progress: sql`coalesce(round(avg(${tasks.progress})), 0)::int`,
+      })
+      .from(tasks)
+      .where(where),
+    database
+      .select({
+        userId: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        total: sql`count(*)::int`,
+        todo: sql`count(*) filter (where ${tasks.status} = 'TODO')::int`,
+        inProgress: sql`count(*) filter (where ${tasks.status} = 'IN_PROGRESS')::int`,
+        done: sql`count(*) filter (where ${tasks.status} = 'DONE')::int`,
+        progress: sql`coalesce(round(avg(${tasks.progress})), 0)::int`,
+      })
+      .from(tasks)
+      .innerJoin(taskAssignees, eq(taskAssignees.taskId, tasks.id))
+      .innerJoin(users, eq(users.id, taskAssignees.userId))
+      .where(where)
+      .groupBy(users.id, users.firstName, users.lastName)
+      .orderBy(asc(users.firstName), asc(users.lastName)),
+  ]);
+  const totals = statistics[0] ?? { total: 0, todo: 0, inProgress: 0, done: 0, progress: 0 };
+  return {
+    total: countValue(totals.total),
+    todo: countValue(totals.todo),
+    inProgress: countValue(totals.inProgress),
+    done: countValue(totals.done),
+    progress: averageProgress(totals.progress),
+    byAssignee: byAssignee.map((person) => ({
+      userId: person.userId,
+      firstName: person.firstName,
+      lastName: person.lastName,
+      total: countValue(person.total),
+      todo: countValue(person.todo),
+      inProgress: countValue(person.inProgress),
+      done: countValue(person.done),
+      progress: averageProgress(person.progress),
+    })),
+  };
 };
 
 export const getProjectDetail = async (workspaceId, projectId) => {

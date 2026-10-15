@@ -159,6 +159,7 @@ export const tasks = pgTable(
     description: text('description'),
     status: text('status').notNull().default('TODO'),
     priority: text('priority').notNull().default('MEDIUM'),
+    progress: integer('progress').notNull().default(0),
     assigneeId: uuid('assignee_id')
       .notNull()
       .references(() => users.id, { onDelete: 'restrict' }),
@@ -185,6 +186,23 @@ export const tasks = pgTable(
     check('tasks_status_valid', sql`${table.status} IN ('TODO', 'IN_PROGRESS', 'DONE')`),
     check('tasks_priority_valid', sql`${table.priority} IN ('LOW', 'MEDIUM', 'HIGH')`),
     check('tasks_version_positive', sql`${table.version} > 0`),
+    check('tasks_progress_range', sql`${table.progress} >= 0 AND ${table.progress} <= 100`),
+  ],
+);
+
+export const taskAssignees = pgTable(
+  'task_assignees',
+  {
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.taskId, table.userId] }),
+    index('task_assignees_user_id_idx').on(table.userId),
   ],
 );
 

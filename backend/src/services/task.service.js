@@ -1,7 +1,7 @@
-import { and, asc, desc, eq, ilike, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db } from '../../db/database.js';
-import { tasks, users, workspaceMembers } from '../../db/schema/index.js';
+import { taskAssignees, tasks, users, workspaceMembers } from '../../db/schema/index.js';
 import { HTTP_STATUS } from '../utils/constants.js';
 import { HttpError } from '../utils/httpError.js';
 import { ensureProject } from './project.service.js';
@@ -22,6 +22,7 @@ const taskFields = {
   description: tasks.description,
   status: tasks.status,
   priority: tasks.priority,
+  progress: tasks.progress,
   assigneeId: tasks.assigneeId,
   dueDate: tasks.dueDate,
   createdBy: tasks.createdBy,
@@ -56,6 +57,50 @@ const taskQuery = (executor) =>
     .innerJoin(assignees, eq(assignees.id, tasks.assigneeId))
     .innerJoin(creators, eq(creators.id, tasks.createdBy));
 
+const assigneeIdList = (input) => {
+  const ids = input.assigneeIds?.length ? input.assigneeIds : input.assigneeId ? [input.assigneeId] : [];
+  return [...new Set(ids)];
+};
+
+const attachAssignees = async (executor, items) => {
+  if (items.length === 0) return items;
+  const rows = await executor
+    .select({
+      taskId: taskAssignees.taskId,
+      id: users.id,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      email: users.email,
+    })
+    .from(taskAssignees)
+    .innerJoin(users, eq(users.id, taskAssignees.userId))
+    .where(inArray(taskAssignees.taskId, items.map((item) => item.id)))
+    .orderBy(asc(users.firstName), asc(users.lastName));
+  const grouped = new Map();
+  for (const row of rows) {
+    const person = { id: row.id, firstName: row.firstName, lastName: row.lastName, email: row.email };
+    const list = grouped.get(row.taskId) ?? [];
+    list.push(person);
+    grouped.set(row.taskId, list);
+  }
+  return items.map((item) => {
+    const people = grouped.get(item.id) ?? [item.assignee];
+    const assignees = [
+      ...people.filter((person) => person.id === item.assigneeId),
+      ...people.filter((person) => person.id !== item.assigneeId),
+    ];
+    return { ...item, assignee: assignees[0] ?? item.assignee, assignees };
+  });
+};
+
+const replaceAssignees = async (executor, workspaceId, taskId, assigneeIds) => {
+  for (const assigneeId of assigneeIds) {
+    await ensureAssignableMember(executor, workspaceId, assigneeId);
+  }
+  await executor.delete(taskAssignees).where(eq(taskAssignees.taskId, taskId));
+  await executor.insert(taskAssignees).values(assigneeIds.map((userId) => ({ taskId, userId })));
+};
+
 const ensureAssignableMember = async (executor, workspaceId, assigneeId) => {
   const [membership] = await executor
     .select({ role: workspaceMembers.role })
@@ -83,7 +128,7 @@ const orderColumns = {
 export const createTask = async (workspaceId, projectId, userId, input) =>
   requireDb().transaction(async (tx) => {
     await ensureProject(tx, workspaceId, projectId);
-    await ensureAssignableMember(tx, workspaceId, input.assigneeId);
+    const assigneeIds = assigneeIdList(input);
     const [task] = await tx
       .insert(tasks)
       .values({
@@ -93,18 +138,22 @@ export const createTask = async (workspaceId, projectId, userId, input) =>
         description: input.description?.trim() || null,
         status: input.status,
         priority: input.priority,
-        assigneeId: input.assigneeId,
+        progress: input.progress,
+        assigneeId: assigneeIds[0],
         dueDate: input.dueDate,
         createdBy: userId,
       })
       .returning({ id: tasks.id });
+    await replaceAssignees(tx, workspaceId, task.id, assigneeIds);
     return task;
   });
 
 export const getTask = async (workspaceId, projectId, taskId) => {
-  const [task] = await taskQuery(requireDb()).where(taskWhere(workspaceId, projectId, taskId)).limit(1);
+  const database = requireDb();
+  const [task] = await taskQuery(database).where(taskWhere(workspaceId, projectId, taskId)).limit(1);
   if (!task) throw new HttpError(HTTP_STATUS.NOT_FOUND, 'Task not found');
-  return task;
+  const [withAssignees] = await attachAssignees(database, [task]);
+  return withAssignees;
 };
 
 export const listTasks = async (workspaceId, projectId, query) => {
@@ -116,7 +165,12 @@ export const listTasks = async (workspaceId, projectId, query) => {
   }
   if (query.status) conditions.push(eq(tasks.status, query.status));
   if (query.priority) conditions.push(eq(tasks.priority, query.priority));
-  if (query.assigneeId) conditions.push(eq(tasks.assigneeId, query.assigneeId));
+  if (query.assigneeId) {
+    conditions.push(or(
+      eq(tasks.assigneeId, query.assigneeId),
+      sql`exists (select 1 from "task_assignees" where "task_assignees"."task_id" = ${tasks.id} and "task_assignees"."user_id" = ${query.assigneeId})`,
+    ));
+  }
 
   const where = and(...conditions);
   const orderColumn = orderColumns[query.sortBy];
@@ -127,9 +181,10 @@ export const listTasks = async (workspaceId, projectId, query) => {
     taskQuery(database).where(where).orderBy(order, asc(tasks.id)).limit(query.pageSize).offset(offset),
     database.select({ total: sql`count(*)::int` }).from(tasks).where(where),
   ]);
+  const tasksWithAssignees = await attachAssignees(database, items);
   const total = countResult[0]?.total ?? 0;
   return {
-    items,
+    items: tasksWithAssignees,
     pagination: {
       page: query.page,
       pageSize: query.pageSize,
@@ -152,25 +207,33 @@ export const updateTask = async (workspaceId, projectId, taskId, userId, workspa
       .limit(1);
     if (!existing) throw new HttpError(HTTP_STATUS.NOT_FOUND, 'Task not found');
 
+    const links = await tx
+      .select({ userId: taskAssignees.userId })
+      .from(taskAssignees)
+      .where(eq(taskAssignees.taskId, taskId));
+    const assignedIds = new Set(links.map((link) => link.userId));
+    assignedIds.add(existing.assigneeId);
     const requestedFields = Object.keys(input).filter((key) => key !== 'version');
-    const memberStatusOnly =
+    const memberFields = new Set(['status', 'progress']);
+    const memberCanUpdate =
       workspaceRole === 'member' &&
-      existing.assigneeId === userId &&
-      requestedFields.length === 1 &&
-      requestedFields[0] === 'status';
-    if (workspaceRole === 'member' && !memberStatusOnly) {
-      throw new HttpError(HTTP_STATUS.FORBIDDEN, 'Members can only update the status of their assigned tasks');
+      assignedIds.has(userId) &&
+      requestedFields.length > 0 &&
+      requestedFields.every((key) => memberFields.has(key));
+    if (workspaceRole === 'member' && !memberCanUpdate) {
+      throw new HttpError(HTTP_STATUS.FORBIDDEN, 'Members can only update the status and progress of their assigned tasks');
     }
 
-    if (input.assigneeId !== undefined && input.assigneeId !== existing.assigneeId) {
-      await ensureAssignableMember(tx, workspaceId, input.assigneeId);
-    }
+    const nextAssigneeIds = input.assigneeIds !== undefined || input.assigneeId !== undefined
+      ? assigneeIdList(input)
+      : null;
 
     const changes = {
       updatedAt: new Date(),
       version: sql`${tasks.version} + 1`,
     };
-    for (const key of ['title', 'description', 'status', 'priority', 'assigneeId', 'dueDate']) {
+    if (nextAssigneeIds) changes.assigneeId = nextAssigneeIds[0];
+    for (const key of ['title', 'description', 'status', 'priority', 'progress', 'dueDate']) {
       if (input[key] !== undefined) changes[key] = key === 'description' ? input[key]?.trim() || null : input[key];
     }
 
@@ -185,6 +248,7 @@ export const updateTask = async (workspaceId, projectId, taskId, userId, workspa
         'This task was updated by someone else. Refresh the task and try again.',
       );
     }
+    if (nextAssigneeIds) await replaceAssignees(tx, workspaceId, taskId, nextAssigneeIds);
     return updated[0];
   });
 

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { type ChangeEvent, type FocusEvent, FormEvent, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useSelector } from 'react-redux';
 import { AppShell } from '../../../../../components/AppShell';
@@ -10,6 +10,7 @@ import { Button } from '../../../../../components/ui/Button';
 import { Card } from '../../../../../components/ui/Card';
 import { ApiError, apiRequest } from '../../../../../lib/api';
 import {
+  assigneeLabel,
   canEditTask,
   priorityLabel,
   type ProjectDetail,
@@ -17,6 +18,7 @@ import {
   type Task,
   type TaskList,
   type TaskPriority,
+  taskAssigneeIds,
   taskQueryString,
   type TaskStatus,
   statusLabel,
@@ -39,7 +41,7 @@ type Member = {
 
 function assigneeChoices(
   members: Member[],
-  current?: { userId: string; firstName: string; lastName: string },
+  current: { userId: string; firstName: string; lastName: string }[] = [],
 ) {
   const choices = members
     .filter((member) => member.role === 'member')
@@ -47,13 +49,65 @@ function assigneeChoices(
       userId: member.userId,
       label: `${member.firstName} ${member.lastName}`,
     }));
-  if (current && !choices.some((choice) => choice.userId === current.userId)) {
-    choices.unshift({
-      userId: current.userId,
-      label: `${current.firstName} ${current.lastName} (current assignee)`,
-    });
+  for (const person of [...current].reverse()) {
+    if (!choices.some((choice) => choice.userId === person.userId)) {
+      choices.unshift({
+        userId: person.userId,
+        label: `${person.firstName} ${person.lastName} (current assignee)`,
+      });
+    }
   }
   return choices;
+}
+
+function AssigneeMultiSelect({
+  options,
+  value,
+  invalid = false,
+  onChange,
+}: {
+  options: { userId: string; label: string }[];
+  value: string[];
+  invalid?: boolean;
+  onChange: (ids: string[]) => void;
+}) {
+  return (
+    <div className="assignee-field">
+      <span>Assignees</span>
+      <div className={invalid ? 'assignee-list assignee-list-error' : 'assignee-list'} role="group" aria-label="Assignees">
+        {options.map((option) => (
+          <label key={option.userId} className="assignee-option">
+            <input
+              type="checkbox"
+              checked={value.includes(option.userId)}
+              onChange={() => onChange(value.includes(option.userId) ? value.filter((id) => id !== option.userId) : [...value, option.userId])}
+            />
+            {option.label}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function readProgress(raw: string) {
+  const digits = raw.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+  if (!digits) return 0;
+  return Math.min(100, Math.max(0, Number(digits)));
+}
+
+function focusProgress(event: FocusEvent<HTMLInputElement>) {
+  const input = event.currentTarget;
+  if (input.value !== '0') return;
+  requestAnimationFrame(() => {
+    if (input.value === '0') input.select();
+  });
+}
+
+function changeProgress(event: ChangeEvent<HTMLInputElement>) {
+  const raw = event.target.value.replace(/^0+(?=\d)/, '');
+  if (raw !== event.target.value) event.target.value = raw;
+  return readProgress(raw);
 }
 
 const emptyTask = {
@@ -61,7 +115,8 @@ const emptyTask = {
   description: '',
   status: 'TODO' as TaskStatus,
   priority: 'MEDIUM' as TaskPriority,
-  assigneeId: '',
+  progress: 0,
+  assigneeIds: [] as string[],
   dueDate: '',
 };
 
@@ -73,12 +128,13 @@ function ProjectDetailPage() {
   const workspaceId = params.workspaceId;
   const projectId = params.projectId;
   const basePath = projectPath(workspaceId, projectId);
+  const apiPath = `/api/workspaces/${workspaceId}/projects/${projectId}`;
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [taskList, setTaskList] = useState<TaskList | null>(null);
   const [taskForm, setTaskForm] = useState(emptyTask);
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [selectedTask, setSelectedTask] = useState<(Task & { assigneeIds: string[] }) | null>(null);
   const [editingProject, setEditingProject] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Task | 'project' | null>(null);
   const [projectDraft, setProjectDraft] = useState({ name: '', description: '' });
@@ -156,7 +212,7 @@ function ProjectDetailPage() {
     if (pending) return;
     setPending(true); setError(null); setNotice(null);
     try {
-      await apiRequest(basePath, {
+      await apiRequest(apiPath, {
         method: 'PATCH',
         body: JSON.stringify({ name: projectDraft.name, description: projectDraft.description || null }),
       });
@@ -172,7 +228,7 @@ function ProjectDetailPage() {
     if (pending) return;
     setPending(true); setError(null);
     try {
-      await apiRequest(basePath, { method: 'DELETE' });
+      await apiRequest(apiPath, { method: 'DELETE' });
       router.replace(`/workspaces/${workspaceId}`);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'Unable to delete project');
@@ -184,8 +240,16 @@ function ProjectDetailPage() {
     event.preventDefault();
     if (pending) return;
     setPending(true); setError(null); setNotice(null);
+    if (taskForm.assigneeIds.length === 0) {
+      setError('Select at least one assignee');
+      setPending(false);
+      return;
+    }
     try {
-      await apiRequest(`${basePath}/tasks`, { method: 'POST', body: JSON.stringify(taskForm) });
+      await apiRequest(`${apiPath}/tasks`, {
+        method: 'POST',
+        body: JSON.stringify({ ...taskForm, assigneeId: taskForm.assigneeIds[0], assigneeIds: taskForm.assigneeIds }),
+      });
       setTaskForm(emptyTask);
       replaceQuery({ page: '1' });
       await reloadTasks();
@@ -200,19 +264,26 @@ function ProjectDetailPage() {
     event.preventDefault();
     if (!selectedTask || pending) return;
     setPending(true); setError(null); setNotice(null);
-    const payload = selectedTask.assigneeId === user?.id && workspace?.role === 'member'
-      ? { status: selectedTask.status, version: selectedTask.version }
+    if (selectedTask.assigneeIds.length === 0) {
+      setError('Select at least one assignee');
+      setPending(false);
+      return;
+    }
+    const payload = selectedTask.assigneeIds.includes(user?.id ?? '') && workspace?.role === 'member'
+      ? { status: selectedTask.status, progress: selectedTask.progress, version: selectedTask.version }
       : {
           title: selectedTask.title,
           description: selectedTask.description,
           status: selectedTask.status,
           priority: selectedTask.priority,
-          assigneeId: selectedTask.assigneeId,
+          progress: selectedTask.progress,
+          assigneeId: selectedTask.assigneeIds[0],
+          assigneeIds: selectedTask.assigneeIds,
           dueDate: selectedTask.dueDate,
           version: selectedTask.version,
         };
     try {
-      await apiRequest(`${basePath}/tasks/${selectedTask.id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+      await apiRequest(`${apiPath}/tasks/${selectedTask.id}`, { method: 'PATCH', body: JSON.stringify(payload) });
       setSelectedTask(null);
       await reloadTasks();
       await reloadProject();
@@ -226,7 +297,7 @@ function ProjectDetailPage() {
     if (pending) return;
     setPending(true); setError(null); setNotice(null);
     try {
-      await apiRequest(`${basePath}/tasks/${task.id}`, { method: 'DELETE' });
+      await apiRequest(`${apiPath}/tasks/${task.id}`, { method: 'DELETE' });
       await reloadTasks();
       await reloadProject();
       setNotice('Task deleted');
@@ -243,11 +314,11 @@ function ProjectDetailPage() {
   const activeRole = workspace.role;
   const createAssignees = assigneeChoices(members);
   const editAssignees = selectedTask
-    ? assigneeChoices(members, {
-        userId: selectedTask.assigneeId,
-        firstName: selectedTask.assignee.firstName,
-        lastName: selectedTask.assignee.lastName,
-      })
+    ? assigneeChoices(members, (selectedTask.assignees?.length ? selectedTask.assignees : [selectedTask.assignee]).map((person) => ({
+        userId: person.id,
+        firstName: person.firstName,
+        lastName: person.lastName,
+      })))
     : [];
 
   return <AppShell>
@@ -263,14 +334,15 @@ function ProjectDetailPage() {
         <Card><span>Total tasks</span><strong>{project.statistics.total}</strong></Card>
         <Card><span>To do</span><strong>{project.statistics.todo}</strong></Card>
         <Card><span>In progress</span><strong>{project.statistics.inProgress}</strong></Card>
-        <Card><span>Done</span><strong>{project.statistics.done}</strong></Card>
+        <Card><span>Done</span><strong>{project.statistics.done}</strong><small>{project.statistics.progress}% complete</small></Card>
       </section>
       {manageTasks ? <Card><h2>Create task</h2><form className="task-form" onSubmit={submitTask}>
         <label>Title<input value={taskForm.title} onChange={(event) => setTaskForm({ ...taskForm, title: event.target.value })} maxLength={240} required /></label>
-        <label>Assignee<select value={taskForm.assigneeId} onChange={(event) => setTaskForm({ ...taskForm, assigneeId: event.target.value })} required><option value="">Select a member</option>{createAssignees.map((assignee) => <option key={assignee.userId} value={assignee.userId}>{assignee.label}</option>)}</select></label>
+        <AssigneeMultiSelect options={createAssignees} value={taskForm.assigneeIds} invalid={error === 'Select at least one assignee' && taskForm.assigneeIds.length === 0} onChange={(assigneeIds) => { setTaskForm({ ...taskForm, assigneeIds }); if (error === 'Select at least one assignee') setError(null); }} />
         <label>Due date<input type="date" value={taskForm.dueDate} onChange={(event) => setTaskForm({ ...taskForm, dueDate: event.target.value })} required /></label>
         <label>Status<select value={taskForm.status} onChange={(event) => setTaskForm({ ...taskForm, status: event.target.value as TaskStatus })}>{Object.entries(statusLabel).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
         <label>Priority<select value={taskForm.priority} onChange={(event) => setTaskForm({ ...taskForm, priority: event.target.value as TaskPriority })}>{Object.entries(priorityLabel).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+        <label>Progress<input type="number" min={0} max={100} step={1} value={taskForm.progress} onFocus={focusProgress} onChange={(event) => setTaskForm({ ...taskForm, progress: changeProgress(event) })} /></label>
         <label className="form-span">Description<textarea value={taskForm.description} onChange={(event) => setTaskForm({ ...taskForm, description: event.target.value })} maxLength={10000} /></label>
         <div className="form-span"><Button type="submit" disabled={pending}>Create task</Button></div>
       </form></Card> : null}
@@ -283,12 +355,12 @@ function ProjectDetailPage() {
           <select aria-label="Filter by assignee" value={query.assigneeId ?? ''} onChange={(event) => replaceQuery({ assigneeId: event.target.value || undefined, page: undefined })}><option value="">All assignees</option>{members.map((member) => <option key={member.userId} value={member.userId}>{member.firstName} {member.lastName}</option>)}</select>
           <select aria-label="Sort tasks" value={`${query.sortBy}:${query.sortDirection}`} onChange={(event) => { const [sortBy, sortDirection] = event.target.value.split(':'); replaceQuery({ sortBy, sortDirection, page: undefined }); }}><option value="createdAt:desc">Newest first</option><option value="updatedAt:desc">Recently updated</option><option value="dueDate:asc">Due date</option><option value="priority:desc">Priority</option><option value="title:asc">Title</option></select>
         </div>
-        {!taskList?.items.length ? <div className="empty-state compact"><h3>No matching tasks</h3><p>Try changing your filters or create a new task.</p></div> : <div className="task-table-wrap"><table><thead><tr><th>Task</th><th>Status</th><th>Priority</th><th>Assignee</th><th>Due</th><th aria-label="Actions" /></tr></thead><tbody>{taskList.items.map((task) => <tr key={task.id}><td><strong>{task.title}</strong><small>{task.description || 'No description'}</small></td><td><span className={`status-chip status-${task.status}`}>{statusLabel[task.status]}</span></td><td><span className={`priority-chip priority-${task.priority}`}>{priorityLabel[task.priority]}</span></td><td>{task.assignee.firstName} {task.assignee.lastName}</td><td>{new Date(task.dueDate).toLocaleDateString()}</td><td className="task-actions">{canEditTask(activeRole, task, user?.id) ? <Button variant="secondary" type="button" onClick={() => setSelectedTask(task)}>Edit</Button> : null}{manageTasks ? <Button variant="ghost" type="button" onClick={() => setDeleteTarget(task)}>Delete</Button> : null}</td></tr>)}</tbody></table></div>}
+        {!taskList?.items.length ? <div className="empty-state compact"><h3>No matching tasks</h3><p>Try changing your filters or create a new task.</p></div> : <div className="task-table-wrap"><table><thead><tr><th>Task</th><th>Status</th><th>Priority</th><th>Assignees</th><th>Due</th><th aria-label="Actions" /></tr></thead><tbody>{taskList.items.map((task) => <tr key={task.id}><td><strong>{task.title}</strong><small>{task.description || 'No description'}</small></td><td><span className={`status-chip status-${task.status}`}>{statusLabel[task.status]}</span></td><td><span className="priority-group"><span className={`priority-chip priority-${task.priority}`}>{priorityLabel[task.priority]}</span><span className="progress-chip">{task.progress}% done</span></span></td><td>{assigneeLabel(task)}</td><td>{new Date(task.dueDate).toLocaleDateString()}</td><td className="task-actions">{canEditTask(activeRole, task, user?.id) ? <Button variant="secondary" type="button" onClick={() => setSelectedTask({ ...task, assigneeIds: taskAssigneeIds(task) })}>Edit</Button> : null}{manageTasks ? <Button variant="ghost" type="button" onClick={() => setDeleteTarget(task)}>Delete</Button> : null}</td></tr>)}</tbody></table></div>}
         {taskList && taskList.pagination.totalPages > 1 ? <div className="pagination"><span>Page {taskList.pagination.page} of {taskList.pagination.totalPages}</span><div><Button variant="secondary" type="button" disabled={taskList.pagination.page === 1} onClick={() => replaceQuery({ page: String(taskList.pagination.page - 1) })}>Previous</Button><Button variant="secondary" type="button" disabled={taskList.pagination.page === taskList.pagination.totalPages} onClick={() => replaceQuery({ page: String(taskList.pagination.page + 1) })}>Next</Button></div></div> : null}
       </Card>
       {selectedTask ? <div className="modal-overlay" role="presentation"><section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><header><h2 id="task-edit-title">Edit task</h2><Button variant="secondary" type="button" onClick={() => setSelectedTask(null)}>Close</Button></header><form className="task-form" onSubmit={updateTask}>
-        {activeRole !== 'member' ? <><label>Title<input value={selectedTask.title} onChange={(event) => setSelectedTask({ ...selectedTask, title: event.target.value })} required /></label><label>Assignee<select value={selectedTask.assigneeId} onChange={(event) => setSelectedTask({ ...selectedTask, assigneeId: event.target.value })}>{editAssignees.map((assignee) => <option key={assignee.userId} value={assignee.userId}>{assignee.label}</option>)}</select></label><label>Due date<input type="date" value={selectedTask.dueDate.slice(0, 10)} onChange={(event) => setSelectedTask({ ...selectedTask, dueDate: event.target.value })} required /></label><label>Priority<select value={selectedTask.priority} onChange={(event) => setSelectedTask({ ...selectedTask, priority: event.target.value as TaskPriority })}>{Object.entries(priorityLabel).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label className="form-span">Description<textarea value={selectedTask.description ?? ''} onChange={(event) => setSelectedTask({ ...selectedTask, description: event.target.value })} /></label></> : null}
-        <label>Status<select value={selectedTask.status} onChange={(event) => setSelectedTask({ ...selectedTask, status: event.target.value as TaskStatus })}>{Object.entries(statusLabel).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><footer className="form-span"><Button variant="secondary" type="button" onClick={() => setSelectedTask(null)}>Cancel</Button><Button type="submit" disabled={pending}>Save changes</Button></footer>
+        {activeRole !== 'member' ? <><label>Title<input value={selectedTask.title} onChange={(event) => setSelectedTask({ ...selectedTask, title: event.target.value })} required /></label><AssigneeMultiSelect options={editAssignees} value={selectedTask.assigneeIds} invalid={error === 'Select at least one assignee' && selectedTask.assigneeIds.length === 0} onChange={(assigneeIds) => { setSelectedTask({ ...selectedTask, assigneeIds, assigneeId: assigneeIds[0] ?? selectedTask.assigneeId }); if (error === 'Select at least one assignee') setError(null); }} /><label>Due date<input type="date" value={selectedTask.dueDate.slice(0, 10)} onChange={(event) => setSelectedTask({ ...selectedTask, dueDate: event.target.value })} required /></label><label>Priority<select value={selectedTask.priority} onChange={(event) => setSelectedTask({ ...selectedTask, priority: event.target.value as TaskPriority })}>{Object.entries(priorityLabel).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label className="form-span">Description<textarea value={selectedTask.description ?? ''} onChange={(event) => setSelectedTask({ ...selectedTask, description: event.target.value })} /></label></> : null}
+        <label>Status<select value={selectedTask.status} onChange={(event) => setSelectedTask({ ...selectedTask, status: event.target.value as TaskStatus })}>{Object.entries(statusLabel).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>Progress<input type="number" min={0} max={100} step={1} value={selectedTask.progress} onFocus={focusProgress} onChange={(event) => setSelectedTask({ ...selectedTask, progress: changeProgress(event) })} aria-label="Progress percentage" /></label><footer className="form-span"><Button variant="secondary" type="button" onClick={() => setSelectedTask(null)}>Cancel</Button><Button type="submit" disabled={pending}>Save changes</Button></footer>
       </form></section></div> : null}
       {editingProject ? <div className="modal-overlay" role="presentation"><section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="project-edit-title"><header><h2 id="project-edit-title">Edit project</h2><Button variant="secondary" type="button" onClick={() => setEditingProject(false)}>Close</Button></header><form className="task-form" onSubmit={saveProject}><label className="form-span">Name<input value={projectDraft.name} onChange={(event) => setProjectDraft({ ...projectDraft, name: event.target.value })} maxLength={160} required /></label><label className="form-span">Description<textarea value={projectDraft.description} onChange={(event) => setProjectDraft({ ...projectDraft, description: event.target.value })} maxLength={10000} /></label><footer className="form-span"><Button variant="secondary" type="button" onClick={() => setEditingProject(false)}>Cancel</Button><Button type="submit" disabled={pending}>Save changes</Button></footer></form></section></div> : null}
       {deleteTarget ? <div className="modal-overlay" role="presentation"><section className="modal-panel confirm-panel" role="dialog" aria-modal="true" aria-labelledby="delete-title"><header><h2 id="delete-title">Confirm deletion</h2></header><p>{deleteTarget === 'project' ? `Delete “${project.name}” and every task in it? This cannot be undone.` : `Delete “${deleteTarget.title}”? This cannot be undone.`}</p><footer><Button variant="secondary" type="button" onClick={() => setDeleteTarget(null)}>Cancel</Button><Button variant="danger" type="button" disabled={pending} onClick={() => { setDeleteTarget(null); if (deleteTarget === 'project') void deleteProject(); else void deleteTask(deleteTarget); }}>Delete</Button></footer></section></div> : null}

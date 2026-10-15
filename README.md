@@ -76,10 +76,10 @@ Workspace routes use a separate membership check. Each workspace has one Owner; 
 Projects belong to one workspace. Tasks belong to one project and require a title, assignee, due date, status (`TODO`, `IN_PROGRESS`, or `DONE`), priority (`LOW`, `MEDIUM`, or `HIGH`), creator, timestamps, and optimistic-lock `version`.
 
 - Owner and Admin can create, edit, and delete projects and tasks.
-- Members can view workspace projects/tasks and only update `status` on tasks assigned to them.
+- Members can view workspace projects/tasks and can update `status` and `progress` (0–100) on tasks assigned to them.
 - A new task assignee, and any change of assignee, must be a user whose current role in that workspace is Member. An Owner or Admin cannot be newly assigned. If an assigned Member is later promoted, that existing assignment stays in place until the assignee is changed.
 - `GET /api/workspaces/:workspaceId/projects/:projectId/tasks` supports `search`, `status`, `priority`, `assigneeId`, `sortBy` (`createdAt`, `updatedAt`, `dueDate`, `priority`, `title`), `sortDirection`, `page`, and `pageSize` (1–100). Responses include `items` plus pagination metadata.
-- Project detail responses include task totals by status. The migration indexes workspace/project lookup, project task ordering, status/priority filtering, assignee filtering, and due dates.
+- Project detail responses include task totals by status and a `progress` percentage: the average of each task's progress, rounded to the nearest whole number. A project with no tasks is 0%. The same average is returned for each assignee in `byAssignee`. Each task stores its own `progress` from 0 to 100. The migration indexes workspace/project lookup, project task ordering, status/priority filtering, assignee filtering, and due dates.
 - Task updates must submit the current `version`. Updates use `id + version` matching and return `409 Conflict` when another change has already advanced the version; reload the task before retrying.
 
 ## Tests

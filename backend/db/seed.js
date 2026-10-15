@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { hashPassword } from '../src/utils/password.helper.js';
 import { db, pool } from './database.js';
-import { projects, roles, tasks, users, workspaceMembers, workspaces } from './schema/index.js';
+import { projects, roles, taskAssignees, tasks, users, workspaceMembers, workspaces } from './schema/index.js';
 
 if (!db || !pool) {
   console.error('[db] DATABASE_URL is empty');
@@ -180,9 +180,7 @@ const ensureTask = async (tx, workspaceId, projectId, task, assigneeId, createdB
     .from(tasks)
     .where(and(eq(tasks.projectId, projectId), eq(tasks.title, task.title)))
     .limit(1);
-  if (existing) return;
-
-  await tx.insert(tasks).values({
+  const taskId = existing?.id ?? (await tx.insert(tasks).values({
     workspaceId,
     projectId,
     title: task.title,
@@ -192,7 +190,9 @@ const ensureTask = async (tx, workspaceId, projectId, task, assigneeId, createdB
     assigneeId,
     dueDate: task.dueDate,
     createdBy,
-  });
+  }).returning({ id: tasks.id }))[0].id;
+
+  await tx.insert(taskAssignees).values({ taskId, userId: assigneeId }).onConflictDoNothing();
 };
 
 await db.insert(roles).values({ title: 'user' }).onConflictDoNothing({ target: roles.title });

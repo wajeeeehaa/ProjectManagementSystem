@@ -295,9 +295,10 @@ dbTest('enforces project task roles, queries, and optimistic locking', async () 
     .patch(`/api/workspaces/${workspaceId}/projects/${projectId}/tasks/${firstTask.body.data.id}`)
     .set('Cookie', memberCookie)
     .set('X-CSRF-Token', memberCsrf)
-    .send({ status: 'IN_PROGRESS', version: 1 });
+    .send({ status: 'IN_PROGRESS', progress: 40, version: 1 });
   assert.equal(statusUpdate.status, 200);
   assert.equal(statusUpdate.body.data.version, 2);
+  assert.equal(statusUpdate.body.data.progress, 40);
 
   const stale = await request(app)
     .patch(`/api/workspaces/${workspaceId}/projects/${projectId}/tasks/${firstTask.body.data.id}`)
@@ -326,10 +327,22 @@ dbTest('enforces project task roles, queries, and optimistic locking', async () 
   assert.equal(filtered.body.data.items[0].id, secondTask.body.data.id);
   assert.equal(filtered.body.data.pagination.total, 1);
 
+  const completed = await request(app)
+    .patch(`/api/workspaces/${workspaceId}/projects/${projectId}/tasks/${firstTask.body.data.id}`)
+    .set('Cookie', ownerCookie)
+    .set('X-CSRF-Token', ownerCsrf)
+    .send({ status: 'DONE', progress: 100, version: 2 });
+  assert.equal(completed.status, 200);
+
   const detail = await request(app).get(`/api/workspaces/${workspaceId}/projects/${projectId}`).set('Cookie', ownerCookie);
   assert.equal(detail.body.data.statistics.total, 2);
   assert.equal(detail.body.data.statistics.todo, 1);
-  assert.equal(detail.body.data.statistics.inProgress, 1);
+  assert.equal(detail.body.data.statistics.inProgress, 0);
+  assert.equal(detail.body.data.statistics.done, 1);
+  assert.equal(detail.body.data.statistics.progress, 50);
+  assert.equal(detail.body.data.statistics.byAssignee.length, 1);
+  assert.equal(detail.body.data.statistics.byAssignee[0].userId, addedMember.body.data.userId);
+  assert.equal(detail.body.data.statistics.byAssignee[0].progress, 50);
 });
 
 dbTest('assigns tasks only to current workspace members', async () => {
