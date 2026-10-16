@@ -25,7 +25,7 @@ cd ../frontend
 cp .env.example .env
 ```
 
-Set `DATABASE_URL`, generate a `JWT_SECRET` of at least 32 characters, and point `API_PROXY_TARGET` at the API origin, for example `http://127.0.0.1:4000`. Leave `NEXT_PUBLIC_API_URL` empty so the browser calls the Next.js origin.
+Set `DATABASE_URL`, generate a `JWT_SECRET` of at least 32 characters, and point `API_PROXY_TARGET` at the API origin, for example `http://127.0.0.1:4000`. Leave `NEXT_PUBLIC_API_URL` empty so the browser calls the Next.js origin. Set `NEXT_PUBLIC_WS_URL` to the API WebSocket URL using the same hostname as the page, for example `ws://localhost:4000/api/activity/stream` when you open `http://localhost:3000`.
 
 ```bash
 cd backend
@@ -35,7 +35,7 @@ npm run db:seed
 npm run dev
 ```
 
-`db:seed` is idempotent. It ensures the global `user` role, then creates verified Gmail-style test accounts, two workspaces, projects, and tasks. Every seed account uses the password `ChangeMe!12345`. Running the seed again resets that password for these accounts only.
+`db:seed` is idempotent. It ensures the global `user` role, then creates verified Gmail-style test accounts, two workspaces, projects, tasks, and one created-task activity row for each seeded task. Every seed account uses the password `ChangeMe!12345`. Running the seed again resets that password for these accounts only.
 
 | Email | Seed Delivery | Seed Research |
 |---|---|---|
@@ -45,7 +45,7 @@ npm run dev
 | `wajeeha.member2@gmail.com` | Member | Member |
 | `wajeeha.member3@gmail.com` | | Member |
 
-Tasks are assigned only to Members. Migration `0000_auth` also inserts the global `user` role. Migration `0001_workspaces` creates workspace and membership tables. Migration `0002_projects_tasks` creates projects and tasks.
+Tasks are assigned only to Members. Migration `0000_auth` also inserts the global `user` role. Migration `0001_workspaces` creates workspace and membership tables. Migration `0002_projects_tasks` creates projects and tasks. Migration `0005_activity` stores the task activity feed. Its index on `(workspace_id, created_at DESC, id DESC)` serves the membership-scoped feed, which filters by workspace and reads the newest rows first.
 
 ```bash
 cd frontend
@@ -57,7 +57,7 @@ Open `http://localhost:3000`. Register, open the activation link from the SMTP i
 
 ## Production
 
-Terminate TLS at one host. Route `/api` to Express and every other path to Next.js. Set `NODE_ENV=production`, `SECURE_COOKIE=true`, and `SAME_SITE=lax` or `SAME_SITE=strict`. The API refuses to start in production when the secure flag is false, `SAME_SITE` is invalid, or `SAME_SITE=none`. Do not add a trailing slash to the refresh path; the refresh cookie is scoped to the exact path `/api/auth/refresh-token`.
+Terminate TLS at one host. Route `/api` HTTP requests to Express and every other path to Next.js. Also forward WebSocket upgrades for `/api/activity/stream` to Express; the Next.js rewrite does not do that. Set `NODE_ENV=production`, `SECURE_COOKIE=true`, and `SAME_SITE=lax` or `SAME_SITE=strict`. The API refuses to start in production when the secure flag is false, `SAME_SITE` is invalid, or `SAME_SITE=none`. Do not add a trailing slash to the refresh path; the refresh cookie is scoped to the exact path `/api/auth/refresh-token`. Set `NEXT_PUBLIC_WS_URL` to the public `wss://` URL for `/api/activity/stream` on that same host.
 
 CORS remains limited to `CORS_ORIGINS`, allows `Authorization` and `X-CSRF-Token`, and uses credentials. Same-origin browser traffic does not depend on CORS, but direct API clients do.
 
@@ -81,6 +81,16 @@ Projects belong to one workspace. Tasks belong to one project and require a titl
 - `GET /api/workspaces/:workspaceId/projects/:projectId/tasks` supports `search`, `status`, `priority`, `assigneeId`, `sortBy` (`createdAt`, `updatedAt`, `dueDate`, `priority`, `title`), `sortDirection`, `page`, and `pageSize` (1–100). Responses include `items` plus pagination metadata.
 - Project detail responses include task totals by status and a `progress` percentage: the average of each task's progress, rounded to the nearest whole number. A project with no tasks is 0%. The same average is returned for each assignee in `byAssignee`. Each task stores its own `progress` from 0 to 100. The migration indexes workspace/project lookup, project task ordering, status/priority filtering, assignee filtering, and due dates.
 - Task updates must submit the current `version`. Updates use `id + version` matching and return `409 Conflict` when another change has already advanced the version; reload the task before retrying.
+
+## Activity
+
+Task creation, assignee changes, status changes, priority changes, and deletion write an activity row in the same database transaction as the task change. Title, description, due date, and progress edits do not. A conflicting update writes nothing. Deleting a task keeps its history, including the task title. Deleting a project or workspace removes that activity with it.
+
+`GET /api/activity` returns the newest events from workspaces the caller currently belongs to. `limit` defaults to 20 and can be at most 100. Pass `cursor` from `nextCursor` to load older rows. A removed member stops seeing that workspace's history immediately.
+
+Live updates use a WebSocket at `/api/activity/stream` on the API server. Next.js rewrites proxy ordinary `/api` requests only, so the browser connects to `NEXT_PUBLIC_WS_URL` directly. The access cookie is sent when that URL uses the same hostname as the page. The handshake rejects any `Origin` that is not in `CORS_ORIGINS`, then uses the same access-token session checks as the HTTP API. Each event is sent only to sockets whose user is still a member of that workspace. Removing a member sends `{ "type": "revoked", "workspaceId" }` and stops later events for that workspace. The process keeps this fan-out in memory; one API process is the deployment this app is built for.
+
+The Activity page loads history first, prepends live events, and offers older pages. If the socket drops, the page reconnects with backoff and reloads the newest page. If `NEXT_PUBLIC_WS_URL` is empty, saved history still loads and the page says live updates are unavailable.
 
 ## Tests
 

@@ -1,3 +1,4 @@
+import { revokeWorkspaceAccess } from '../services/realtime.service.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { HTTP_STATUS } from '../utils/constants.js';
 import { successResponse } from '../utils/customResponses.js';
@@ -64,6 +65,7 @@ export const updateMember = asyncHandler(async (req, res) =>
 
 export const removeMember = asyncHandler(async (req, res) => {
   await removeWorkspaceMember(req.params.workspaceId, req.params.userId);
+  revokeWorkspaceAccess(req.params.workspaceId, req.params.userId);
   return successResponse(res, { message: 'Member removed' });
 });
 

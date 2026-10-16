@@ -1,6 +1,7 @@
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { HTTP_STATUS } from '../utils/constants.js';
 import { successResponse } from '../utils/customResponses.js';
+import { publishActivities } from '../services/realtime.service.js';
 import {
   createTask,
   deleteTask,
@@ -16,6 +17,7 @@ export const create = asyncHandler(async (req, res) => {
     req.userId,
     res.locals.validatedInput,
   );
+  await publishActivities(task.activities);
   return successResponse(res, {
     statusCode: HTTP_STATUS.CREATED,
     message: 'Task created',
@@ -42,6 +44,7 @@ export const update = asyncHandler(async (req, res) => {
     req.workspaceRole,
     res.locals.validatedInput,
   );
+  await publishActivities(task.activities);
   return successResponse(res, {
     message: 'Task updated',
     data: await getTask(req.params.workspaceId, req.params.projectId, task.id),
@@ -49,6 +52,12 @@ export const update = asyncHandler(async (req, res) => {
 });
 
 export const remove = asyncHandler(async (req, res) => {
-  await deleteTask(req.params.workspaceId, req.params.projectId, req.params.taskId);
+  const task = await deleteTask(
+    req.params.workspaceId,
+    req.params.projectId,
+    req.params.taskId,
+    req.userId,
+  );
+  await publishActivities(task.activities);
   return successResponse(res, { message: 'Task deleted' });
 });

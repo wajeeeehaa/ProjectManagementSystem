@@ -2,17 +2,22 @@
 
 import Link from 'next/link';
 import { FormEvent, useEffect, useState } from 'react';
-import { useDispatch } from 'react-redux';
+import { useRouter } from 'next/navigation';
+import { useDispatch, useSelector } from 'react-redux';
 import { AuthGuard } from '../../components/AuthGuard';
 import { AppShell } from '../../components/AppShell';
 import { Button } from '../../components/ui/Button';
 import { Card, RoleBadge } from '../../components/ui/Card';
 import { ApiError, apiRequest } from '../../lib/api';
-import type { AppDispatch } from '../../lib/store';
-import { workspaceSaved, workspacesLoaded, type Workspace } from '../../lib/workspaceSlice';
+import { writeLastWorkspaceId } from '../../lib/lastWorkspace';
+import type { AppDispatch, RootState } from '../../lib/store';
+import { activeWorkspaceChanged, workspaceSaved, workspacesLoaded, type Workspace } from '../../lib/workspaceSlice';
+import { roleLabel } from '../../lib/workspaceRoles';
 
 function Workspaces() {
+  const router = useRouter();
   const dispatch = useDispatch<AppDispatch>();
+  const userId = useSelector((state: RootState) => state.auth.user?.id);
   const [items, setItems] = useState<Workspace[]>([]);
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(true);
@@ -31,6 +36,13 @@ function Workspaces() {
       .finally(() => active && setLoading(false));
     return () => { active = false; };
   }, [dispatch]);
+
+  function openWorkspace(workspaceId: string) {
+    if (!workspaceId) return;
+    if (userId) writeLastWorkspaceId(userId, workspaceId);
+    dispatch(activeWorkspaceChanged(workspaceId));
+    router.push(`/workspaces/${workspaceId}`);
+  }
 
   async function createWorkspace(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -58,6 +70,17 @@ function Workspaces() {
         <header className="page-header">
           <div><h1>Workspaces</h1><p>Create a space for your team and its projects.</p></div>
         </header>
+        {items.length > 0 ? (
+          <label className="workspace-picker">
+            Your workspaces
+            <select aria-label="Your workspaces" defaultValue="" onChange={(event) => openWorkspace(event.target.value)}>
+              <option value="">Choose a workspace</option>
+              {items.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>{workspace.name} · {roleLabel[workspace.role]}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <Card className="create-workspace-card">
           <h2>Create workspace</h2>
           <form onSubmit={createWorkspace}>

@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSelector } from 'react-redux';
+import { resolveAuthRedirect } from '../lib/authRedirect';
 import type { RootState } from '../lib/store';
 
 export default function HomePage() {
@@ -12,7 +13,7 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!authReady) return;
-    router.replace(isAuthenticated ? '/dashboard' : '/login');
+    router.replace(resolveAuthRedirect('/', isAuthenticated) ?? '/login');
   }, [authReady, isAuthenticated, router]);
 
   return <p className="status-line">Loading…</p>;

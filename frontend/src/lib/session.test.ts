@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveAuthRedirect } from './authRedirect';
+import { resolveAuthRedirect, WORKSPACE_RESUME_PATH } from './authRedirect';
 import { readCookie } from './csrf';
 import { isStrongPassword } from './passwordPolicy';
 import { classifyRefreshLock } from './refreshLock';
@@ -22,10 +22,12 @@ describe('auth session helpers', () => {
 
   it('sends anonymous users to login and signed-in users away from public auth pages', () => {
     expect(resolveAuthRedirect('/', false)).toBe('/login');
-    expect(resolveAuthRedirect('/', true)).toBe('/workspaces');
+    expect(resolveAuthRedirect('/', true)).toBe(WORKSPACE_RESUME_PATH);
     expect(resolveAuthRedirect('/dashboard', false)).toBe('/login');
     expect(resolveAuthRedirect('/workspaces/123', false)).toBe('/login');
-    expect(resolveAuthRedirect('/login', true)).toBe('/workspaces');
+    expect(resolveAuthRedirect('/activity', false)).toBe('/login');
+    expect(resolveAuthRedirect('/activity', true)).toBeNull();
+    expect(resolveAuthRedirect('/login', true)).toBe(WORKSPACE_RESUME_PATH);
     expect(resolveAuthRedirect('/verify', true)).toBeNull();
     expect(resolveAuthRedirect('/reset-password', false)).toBeNull();
   });

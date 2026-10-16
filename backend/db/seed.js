@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { hashPassword } from '../src/utils/password.helper.js';
 import { db, pool } from './database.js';
-import { projects, roles, taskAssignees, tasks, users, workspaceMembers, workspaces } from './schema/index.js';
+import { projects, roles, taskAssignees, tasks, users, workspaceMembers, workspaces, activities } from './schema/index.js';
 
 if (!db || !pool) {
   console.error('[db] DATABASE_URL is empty');
@@ -174,6 +174,36 @@ const ensureProject = async (tx, workspaceId, project, createdBy) => {
   return created.id;
 };
 
+const ensureCreatedActivity = async (tx, workspaceId, projectId, taskId, task, assigneeId, createdBy) => {
+  const [existing] = await tx
+    .select({ id: activities.id })
+    .from(activities)
+    .where(and(eq(activities.resourceId, taskId), eq(activities.eventType, 'TASK_CREATED')))
+    .limit(1);
+  if (existing) return;
+
+  const [assignee] = await tx
+    .select({ id: users.id, firstName: users.firstName, lastName: users.lastName })
+    .from(users)
+    .where(eq(users.id, assigneeId))
+    .limit(1);
+  await tx.insert(activities).values({
+    workspaceId,
+    projectId,
+    taskId,
+    actorId: createdBy,
+    eventType: 'TASK_CREATED',
+    resourceType: 'task',
+    resourceId: taskId,
+    taskTitle: task.title,
+    details: {
+      status: task.status,
+      priority: task.priority,
+      assignees: assignee ? [assignee] : [],
+    },
+  });
+};
+
 const ensureTask = async (tx, workspaceId, projectId, task, assigneeId, createdBy) => {
   const [existing] = await tx
     .select({ id: tasks.id })
@@ -193,6 +223,7 @@ const ensureTask = async (tx, workspaceId, projectId, task, assigneeId, createdB
   }).returning({ id: tasks.id }))[0].id;
 
   await tx.insert(taskAssignees).values({ taskId, userId: assigneeId }).onConflictDoNothing();
+  await ensureCreatedActivity(tx, workspaceId, projectId, taskId, task, assigneeId, createdBy);
 };
 
 await db.insert(roles).values({ title: 'user' }).onConflictDoNothing({ target: roles.title });
@@ -226,7 +257,7 @@ await db.transaction(async (tx) => {
 });
 
 await pool.end();
-console.log('[db] seed accounts and workspaces are present');
+console.log('[db] seed accounts, workspaces, and task activity are present');
 console.log('[db] password for every seed account: ChangeMe!12345');
 for (const person of people) {
   console.log(`[db] ${person.email}`);

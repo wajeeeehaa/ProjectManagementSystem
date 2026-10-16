@@ -5,6 +5,7 @@ import {
   foreignKey,
   index,
   integer,
+  jsonb,
   pgTable,
   primaryKey,
   text,
@@ -203,6 +204,38 @@ export const taskAssignees = pgTable(
   (table) => [
     primaryKey({ columns: [table.taskId, table.userId] }),
     index('task_assignees_user_id_idx').on(table.userId),
+  ],
+);
+
+export const activities = pgTable(
+  'activities',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'set null' }),
+    actorId: uuid('actor_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    eventType: text('event_type').notNull(),
+    resourceType: text('resource_type').notNull().default('task'),
+    resourceId: uuid('resource_id').notNull(),
+    taskTitle: text('task_title').notNull(),
+    details: jsonb('details').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('activities_workspace_feed_idx').on(table.workspaceId, table.createdAt, table.id),
+    check(
+      'activities_event_type_valid',
+      sql`${table.eventType} IN ('TASK_CREATED', 'TASK_ASSIGNED', 'TASK_STATUS_CHANGED', 'TASK_PRIORITY_CHANGED', 'TASK_DELETED')`,
+    ),
+    check('activities_resource_type_task', sql`${table.resourceType} = 'task'`),
+    check('activities_task_title_not_blank', sql`char_length(btrim(${table.taskTitle})) > 0`),
   ],
 );
 

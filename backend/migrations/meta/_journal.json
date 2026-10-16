@@ -36,6 +36,13 @@
       "when": 1792006800000,
       "tag": "0004_task_assignees",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792010400000,
+      "tag": "0005_activity",
+      "breakpoints": true
     }
   ]
 }

@@ -3,11 +3,14 @@
 import Link from 'next/link';
 import { FormEvent, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { useDispatch, useSelector } from 'react-redux';
 import { AuthGuard } from '../../../components/AuthGuard';
 import { AppShell } from '../../../components/AppShell';
 import { Button } from '../../../components/ui/Button';
+import { ConfirmDialog } from '../../../components/ui/ConfirmDialog';
 import { Card, RoleBadge } from '../../../components/ui/Card';
 import { ApiError, apiRequest } from '../../../lib/api';
+import { forgetLastWorkspaceId, writeLastWorkspaceId } from '../../../lib/lastWorkspace';
 import { type Project, projectPath } from '../../../lib/projectTasks';
 import {
   canManageMembers,
@@ -16,7 +19,8 @@ import {
   canTransferOwnership,
   type WorkspaceRole,
 } from '../../../lib/workspaceRoles';
-import type { Workspace } from '../../../lib/workspaceSlice';
+import type { AppDispatch, RootState } from '../../../lib/store';
+import { activeWorkspaceChanged, workspaceRemoved, workspaceSaved, type Workspace } from '../../../lib/workspaceSlice';
 
 type Member = {
   userId: string;
@@ -27,9 +31,34 @@ type Member = {
   joinedAt: string;
 };
 
+type ConfirmRequest =
+  | { kind: 'remove'; member: Member }
+  | { kind: 'delete' }
+  | { kind: 'transfer'; member: Member };
+
+function confirmTitle(request: ConfirmRequest) {
+  if (request.kind === 'remove') return 'Remove member';
+  if (request.kind === 'transfer') return 'Transfer ownership';
+  return 'Delete workspace';
+}
+
+function confirmMessage(request: ConfirmRequest, workspaceName: string) {
+  if (request.kind === 'remove') return `Remove ${request.member.email} from this workspace? This cannot be undone.`;
+  if (request.kind === 'transfer') return `Transfer ownership of “${workspaceName}” to ${request.member.email}? You will become an Admin.`;
+  return `Delete “${workspaceName}” and every member and project in it? This cannot be undone.`;
+}
+
+function confirmAction(request: ConfirmRequest) {
+  if (request.kind === 'remove') return 'Remove';
+  if (request.kind === 'transfer') return 'Transfer ownership';
+  return 'Delete';
+}
+
 function WorkspaceDetail() {
   const params = useParams<{ workspaceId: string }>();
   const router = useRouter();
+  const dispatch = useDispatch<AppDispatch>();
+  const userId = useSelector((state: RootState) => state.auth.user?.id);
   const workspaceId = params.workspaceId;
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -41,6 +70,7 @@ function WorkspaceDetail() {
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -50,6 +80,9 @@ function WorkspaceDetail() {
     ]).then(async ([loadedWorkspace, loadedMembers]) => {
       if (!active) return;
       setWorkspace(loadedWorkspace);
+      dispatch(workspaceSaved(loadedWorkspace));
+      dispatch(activeWorkspaceChanged(workspaceId));
+      if (userId) writeLastWorkspaceId(userId, workspaceId);
       setMembers(loadedMembers);
       try {
         const loadedProjects = await apiRequest<Project[]>(`/api/workspaces/${workspaceId}/projects`);
@@ -62,13 +95,15 @@ function WorkspaceDetail() {
       if (!active) return;
       const message = caught instanceof ApiError ? caught.message : 'Unable to load workspace';
       if (caught instanceof ApiError && (caught.statusCode === 403 || caught.statusCode === 404)) {
+        if (userId) forgetLastWorkspaceId(userId, workspaceId);
+        dispatch(workspaceRemoved(workspaceId));
         router.replace('/workspaces');
         return;
       }
       setError(message);
     }).finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [router, workspaceId]);
+  }, [dispatch, router, userId, workspaceId]);
 
   async function addMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -117,7 +152,7 @@ function WorkspaceDetail() {
   }
 
   async function removeMember(member: Member) {
-    if (pending || !window.confirm(`Remove ${member.email} from this workspace?`)) return;
+    if (pending) return;
     setPending(true); setError(null); setNotice(null);
     try {
       await apiRequest(`/api/workspaces/${workspaceId}/members/${member.userId}`, { method: 'DELETE' });
@@ -128,7 +163,7 @@ function WorkspaceDetail() {
   }
 
   async function transferOwnership(member: Member) {
-    if (pending || !window.confirm(`Transfer workspace ownership to ${member.email}? You will become an Admin.`)) return;
+    if (pending) return;
     setPending(true); setError(null); setNotice(null);
     try {
       await apiRequest(`/api/workspaces/${workspaceId}/transfer-ownership`, {
@@ -145,10 +180,12 @@ function WorkspaceDetail() {
   }
 
   async function deleteWorkspace() {
-    if (pending || !window.confirm('Delete this workspace permanently?')) return;
+    if (pending) return;
     setPending(true); setError(null);
     try {
       await apiRequest(`/api/workspaces/${workspaceId}`, { method: 'DELETE' });
+      if (userId) forgetLastWorkspaceId(userId, workspaceId);
+      dispatch(workspaceRemoved(workspaceId));
       router.replace('/workspaces');
     } catch (caught) { setError(caught instanceof ApiError ? caught.message : 'Unable to delete workspace'); setPending(false); }
   }
@@ -198,14 +235,31 @@ function WorkspaceDetail() {
                 <select aria-label={`Role for ${member.email}`} value={member.role} disabled={pending} onChange={(event) => changeRole(member, event.target.value as WorkspaceRole)}>
                   <option value="member">Member</option><option value="admin">Admin</option>
                 </select>
-                <Button variant="ghost" type="button" disabled={pending} onClick={() => removeMember(member)}>Remove</Button>
-                {canTransferOwnership(workspace.role) ? <Button variant="secondary" type="button" disabled={pending} onClick={() => transferOwnership(member)}>Make owner</Button> : null}
+                <Button variant="ghost" type="button" disabled={pending} onClick={() => setConfirmRequest({ kind: 'remove', member })}>Remove</Button>
+                {canTransferOwnership(workspace.role) ? <Button variant="secondary" type="button" disabled={pending} onClick={() => setConfirmRequest({ kind: 'transfer', member })}>Make owner</Button> : null}
               </> : <RoleBadge role={member.role} />}
             </div>
           </div>)}
         </div></Card>
-        {canManageWorkspace(workspace.role) ? <Card className="danger-zone"><h2>Danger zone</h2><p>Deleting a workspace removes every member and future project data.</p><Button variant="danger" type="button" disabled={pending} onClick={deleteWorkspace}>Delete workspace</Button></Card> : null}
+        {canManageWorkspace(workspace.role) ? <Card className="danger-zone"><h2>Danger zone</h2><p>Deleting a workspace removes every member and future project data.</p><Button variant="danger" type="button" disabled={pending} onClick={() => setConfirmRequest({ kind: 'delete' })}>Delete workspace</Button></Card> : null}
       </div>
+      {confirmRequest ? (
+        <ConfirmDialog
+          title={confirmTitle(confirmRequest)}
+          message={confirmMessage(confirmRequest, workspace.name)}
+          confirmLabel={confirmAction(confirmRequest)}
+          intent={confirmRequest.kind}
+          pending={pending}
+          onCancel={() => setConfirmRequest(null)}
+          onConfirm={() => {
+            const request = confirmRequest;
+            setConfirmRequest(null);
+            if (request.kind === 'remove') void removeMember(request.member);
+            else if (request.kind === 'transfer') void transferOwnership(request.member);
+            else void deleteWorkspace();
+          }}
+        />
+      ) : null}
     </AppShell>
   );
 }

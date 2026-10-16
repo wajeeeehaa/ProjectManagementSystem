@@ -4,6 +4,7 @@ import { db } from '../../db/database.js';
 import { taskAssignees, tasks, users, workspaceMembers } from '../../db/schema/index.js';
 import { HTTP_STATUS } from '../utils/constants.js';
 import { HttpError } from '../utils/httpError.js';
+import { loadPeople, recordActivity } from './activity.service.js';
 import { ensureProject } from './project.service.js';
 
 const assignees = alias(users, 'task_assignee');
@@ -117,6 +118,14 @@ const ensureAssignableMember = async (executor, workspaceId, assigneeId) => {
   }
 };
 
+const sameIdSet = (left, right) => {
+  if (left.length !== right.length) return false;
+  const values = new Set(left);
+  return right.every((id) => values.has(id));
+};
+
+const peopleInSet = (people, ids) => people.filter((person) => ids.includes(person.id));
+
 const orderColumns = {
   createdAt: tasks.createdAt,
   updatedAt: tasks.updatedAt,
@@ -145,7 +154,21 @@ export const createTask = async (workspaceId, projectId, userId, input) =>
       })
       .returning({ id: tasks.id });
     await replaceAssignees(tx, workspaceId, task.id, assigneeIds);
-    return task;
+    const activity = await recordActivity(tx, {
+      workspaceId,
+      projectId,
+      taskId: task.id,
+      actorId: userId,
+      eventType: 'TASK_CREATED',
+      resourceId: task.id,
+      taskTitle: input.title.trim(),
+      details: {
+        status: input.status,
+        priority: input.priority,
+        assignees: await loadPeople(tx, assigneeIds),
+      },
+    });
+    return { id: task.id, activities: [activity] };
   });
 
 export const getTask = async (workspaceId, projectId, taskId) => {
@@ -199,6 +222,9 @@ export const updateTask = async (workspaceId, projectId, taskId, userId, workspa
     const [existing] = await tx
       .select({
         id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        priority: tasks.priority,
         assigneeId: tasks.assigneeId,
         version: tasks.version,
       })
@@ -248,14 +274,81 @@ export const updateTask = async (workspaceId, projectId, taskId, userId, workspa
         'This task was updated by someone else. Refresh the task and try again.',
       );
     }
-    if (nextAssigneeIds) await replaceAssignees(tx, workspaceId, taskId, nextAssigneeIds);
-    return updated[0];
+    const assigneesChanged = Boolean(nextAssigneeIds) && !sameIdSet([...assignedIds], nextAssigneeIds);
+    if (assigneesChanged) await replaceAssignees(tx, workspaceId, taskId, nextAssigneeIds);
+
+    const taskTitle = input.title !== undefined ? input.title.trim() : existing.title;
+    const recorded = [];
+    let sequence = 0;
+    const startedAt = Date.now();
+    const base = {
+      workspaceId,
+      projectId,
+      taskId,
+      actorId: userId,
+      resourceId: taskId,
+      taskTitle,
+    };
+    const nextActivity = (eventType, details) => recordActivity(tx, {
+      ...base,
+      eventType,
+      details,
+      createdAt: new Date(startedAt + sequence++),
+    });
+    if (input.status !== undefined && input.status !== existing.status) {
+      recorded.push(await nextActivity('TASK_STATUS_CHANGED', { from: existing.status, to: input.status }));
+    }
+    if (input.priority !== undefined && input.priority !== existing.priority) {
+      recorded.push(await nextActivity('TASK_PRIORITY_CHANGED', { from: existing.priority, to: input.priority }));
+    }
+    if (assigneesChanged) {
+      const people = await loadPeople(tx, [...assignedIds, ...nextAssigneeIds]);
+      recorded.push(await nextActivity('TASK_ASSIGNED', {
+        from: peopleInSet(people, [...assignedIds]),
+        to: peopleInSet(people, nextAssigneeIds),
+      }));
+    }
+    return { id: updated[0].id, activities: recorded };
   });
 
-export const deleteTask = async (workspaceId, projectId, taskId) => {
-  const deleted = await requireDb()
-    .delete(tasks)
-    .where(taskWhere(workspaceId, projectId, taskId))
-    .returning({ id: tasks.id });
-  if (deleted.length === 0) throw new HttpError(HTTP_STATUS.NOT_FOUND, 'Task not found');
-};
+export const deleteTask = async (workspaceId, projectId, taskId, userId) =>
+  requireDb().transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        priority: tasks.priority,
+        assigneeId: tasks.assigneeId,
+      })
+      .from(tasks)
+      .where(taskWhere(workspaceId, projectId, taskId))
+      .limit(1);
+    if (!existing) throw new HttpError(HTTP_STATUS.NOT_FOUND, 'Task not found');
+
+    const links = await tx
+      .select({ userId: taskAssignees.userId })
+      .from(taskAssignees)
+      .where(eq(taskAssignees.taskId, taskId));
+    const assigneeIds = [...new Set([existing.assigneeId, ...links.map((link) => link.userId)])];
+    const activity = await recordActivity(tx, {
+      workspaceId,
+      projectId,
+      taskId,
+      actorId: userId,
+      eventType: 'TASK_DELETED',
+      resourceId: taskId,
+      taskTitle: existing.title,
+      details: {
+        status: existing.status,
+        priority: existing.priority,
+        assignees: await loadPeople(tx, assigneeIds),
+      },
+    });
+    const deleted = await tx
+      .delete(tasks)
+      .where(taskWhere(workspaceId, projectId, taskId))
+      .returning({ id: tasks.id });
+    if (deleted.length === 0) throw new HttpError(HTTP_STATUS.NOT_FOUND, 'Task not found');
+    return { activities: [activity] };
+  });

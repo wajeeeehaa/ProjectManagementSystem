@@ -7,6 +7,7 @@ import { errorResponse } from './utils/customResponses.js';
 import { HttpError } from './utils/httpError.js';
 import routes from './routes/index.js';
 import { startAuthCleanup } from './services/cleanup.service.js';
+import { attachActivityStream } from './services/realtime.service.js';
 
 export const createApp = () => {
   const app = express();
@@ -68,8 +69,10 @@ if (isMain) {
   const server = app.listen(SERVER_PORT, SERVER_HOST, () => {
     console.log(`[server] listening on ${SERVER_HOST}:${SERVER_PORT}`);
   });
+  const activityStream = attachActivityStream(server);
   const shutdown = () => {
     clearInterval(timer);
+    activityStream.close();
     server.close();
   };
   process.on('SIGINT', shutdown);

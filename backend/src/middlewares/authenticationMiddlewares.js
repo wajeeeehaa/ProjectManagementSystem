@@ -8,8 +8,7 @@ import { HttpError } from '../utils/httpError.js';
 import { verifyAccessToken } from '../utils/jwt.helper.js';
 import { findSessionById, findUserById, isAccessTokenBlacklisted } from '../services/session.service.js';
 
-export const authentication = asyncHandler(async (req, res, next) => {
-  void res;
+export const authenticateAccess = async (req) => {
   if (!db) throw new HttpError(HTTP_STATUS.SERVER_ERROR, 'Something went wrong');
 
   const token = getBearerOrCookieToken(req);
@@ -31,14 +30,23 @@ export const authentication = asyncHandler(async (req, res, next) => {
     new Date(session.expiresAt).getTime() > Date.now();
   if (!sessionActive) throw new HttpError(HTTP_STATUS.UNAUTHORIZED, 'Unauthorized');
 
-  req.userId = user.id;
-  req.auth = {
+  return {
     userId: user.id,
-    sessionId: session.id,
-    familyId: session.familyId,
-    accessToken: token,
-    csrfHash: session.csrfHash,
+    auth: {
+      userId: user.id,
+      sessionId: session.id,
+      familyId: session.familyId,
+      accessToken: token,
+      csrfHash: session.csrfHash,
+    },
   };
+};
+
+export const authentication = asyncHandler(async (req, res, next) => {
+  void res;
+  const access = await authenticateAccess(req);
+  req.userId = access.userId;
+  req.auth = access.auth;
   return next();
 });
 

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useDispatch } from 'react-redux';
 import { AuthGuard } from '../../components/AuthGuard';
 import { ApiError, apiRequest } from '../../lib/api';
+import { WORKSPACE_RESUME_PATH } from '../../lib/authRedirect';
 import { signedIn, type AuthUser } from '../../lib/authSlice';
 import { consumeAuthNotice, consumeSessionExpiredMessage } from '../../lib/session';
 import type { AppDispatch } from '../../lib/store';
@@ -41,9 +42,9 @@ function LoginForm() {
         body: JSON.stringify({ email, password }),
         retry: false,
       });
-      setStatus('Loading your business account…');
+      setStatus('Opening your workspace…');
       dispatch(signedIn(data.user));
-      router.replace('/workspaces');
+      router.replace(WORKSPACE_RESUME_PATH);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'Unable to reach the server');
       setPending(false);
