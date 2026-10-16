@@ -7,7 +7,17 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { ApiError, apiRequest } from '../lib/api';
 import { signedOut } from '../lib/authSlice';
-import { workspaceIdFromPath, writeLastWorkspaceId, clearLastWorkspaceId } from '../lib/lastWorkspace';
+import {
+  clearLastWorkspaceId,
+  pickWorkspaceId,
+  readLastWorkspaceId,
+  workspaceActivityPath,
+  workspaceIdFromPath,
+  workspaceMembersPath,
+  workspaceProjectsPath,
+  workspaceSectionPath,
+  writeLastWorkspaceId,
+} from '../lib/lastWorkspace';
 import { profileDisplayName, profileInitials } from '../lib/profileLabel';
 import type { AppDispatch, RootState } from '../lib/store';
 import { activeWorkspaceChanged, workspacesCleared, workspacesLoaded, type Workspace } from '../lib/workspaceSlice';
@@ -34,30 +44,38 @@ export function AppShell({ children }: { children: ReactNode }) {
   const dispatch = useDispatch<AppDispatch>();
   const user = useSelector((state: RootState) => state.auth.user);
   const workspaces = useSelector((state: RootState) => state.workspaces.items);
-  const workspacesActive = pathname === '/workspaces' || pathname.startsWith('/workspaces/');
+  const activeWorkspaceId = useSelector((state: RootState) => state.workspaces.activeWorkspaceId);
+  const openWorkspaceId = workspaceIdFromPath(pathname);
+  const scopedWorkspaceId = openWorkspaceId ?? activeWorkspaceId;
+  const projectsActive = /^\/workspaces\/[^/]+\/projects(\/|$)/.test(pathname);
+  const membersActive = /^\/workspaces\/[^/]+\/members(\/|$)/.test(pathname);
   const activityActive = pathname === '/activity' || pathname.startsWith('/activity/');
-  const accountActive = pathname === '/dashboard' || pathname.startsWith('/update-password');
+  const workspaceNavActive = pathname === '/workspaces';
   const [pending, setPending] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const displayName = profileDisplayName(user);
   const initials = profileInitials(user);
-  const openWorkspaceId = workspaceIdFromPath(pathname);
   const openWorkspace = workspaces.find((workspace) => workspace.id === openWorkspaceId) ?? null;
-  const workspaceLine = openWorkspace?.name ?? 'No workspace';
+  const scopedWorkspace = workspaces.find((workspace) => workspace.id === scopedWorkspaceId) ?? null;
+  const workspaceLine = scopedWorkspace?.name ?? 'No workspace';
 
   useEffect(() => {
     if (!user) return;
     let active = true;
     apiRequest<Workspace[]>('/api/workspaces', { redirectOnUnauthorized: true })
       .then((items) => {
-        if (active) dispatch(workspacesLoaded(items));
+        if (!active) return;
+        dispatch(workspacesLoaded(items));
+        if (openWorkspaceId) return;
+        const picked = pickWorkspaceId(items, readLastWorkspaceId(user.id));
+        if (picked) dispatch(activeWorkspaceChanged(picked));
       })
       .catch(() => undefined);
     return () => {
       active = false;
     };
-  }, [dispatch, user]);
+  }, [dispatch, openWorkspaceId, user]);
 
   useEffect(() => {
     if (!user || !openWorkspace) return;
@@ -85,7 +103,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (user) writeLastWorkspaceId(user.id, workspaceId);
     dispatch(activeWorkspaceChanged(workspaceId));
     setMenuOpen(false);
-    router.push(`/workspaces/${workspaceId}`);
+    router.push(workspaceSectionPath(pathname, workspaceId));
   }
 
   async function logout() {
@@ -132,8 +150,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                     key={workspace.id}
                     role="menuitemradio"
                     type="button"
-                    aria-checked={workspace.id === openWorkspaceId}
-                    className={workspace.id === openWorkspaceId ? 'profile-workspace-current' : undefined}
+                    aria-checked={workspace.id === scopedWorkspaceId}
+                    className={workspace.id === scopedWorkspaceId ? 'profile-workspace-current' : undefined}
                     onClick={() => selectWorkspace(workspace.id)}
                   >
                     <span>{workspace.name}</span>
@@ -150,9 +168,10 @@ export function AppShell({ children }: { children: ReactNode }) {
           ) : null}
         </div>
         <nav aria-label="Main navigation">
-          <Link className={`sidebar-link${workspacesActive ? ' sidebar-link-active' : ''}`} href="/workspaces" aria-current={workspacesActive ? 'page' : undefined}>Workspaces</Link>
-          <Link className={`sidebar-link${activityActive ? ' sidebar-link-active' : ''}`} href="/activity" aria-current={activityActive ? 'page' : undefined}>Activity</Link>
-          <Link className={`sidebar-link${accountActive ? ' sidebar-link-active' : ''}`} href="/dashboard" aria-current={accountActive ? 'page' : undefined}>Account</Link>
+          <Link className={`sidebar-link${workspaceNavActive ? ' sidebar-link-active' : ''}`} href="/workspaces" aria-current={workspaceNavActive ? 'page' : undefined}>Workspace</Link>
+          <Link className={`sidebar-link${projectsActive ? ' sidebar-link-active' : ''}`} href={workspaceProjectsPath(scopedWorkspaceId)} aria-current={projectsActive ? 'page' : undefined}>Projects</Link>
+          <Link className={`sidebar-link${membersActive ? ' sidebar-link-active' : ''}`} href={workspaceMembersPath(scopedWorkspaceId)} aria-current={membersActive ? 'page' : undefined}>Members</Link>
+          <Link className={`sidebar-link${activityActive ? ' sidebar-link-active' : ''}`} href={workspaceActivityPath(scopedWorkspaceId)} aria-current={activityActive ? 'page' : undefined}>Activity</Link>
         </nav>
         <button className="sidebar-logout" type="button" disabled={pending} onClick={() => void logout()}>
           <LogOut size={18} strokeWidth={2.25} aria-hidden="true" />

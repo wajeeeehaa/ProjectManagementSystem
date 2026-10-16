@@ -17,7 +17,13 @@ export const create = asyncHandler(async (req, res) =>
   }));
 
 export const list = asyncHandler(async (req, res) =>
-  successResponse(res, { data: await listProjects(req.params.workspaceId) }));
+  successResponse(res, {
+    data: await listProjects(req.params.workspaceId, {
+      userId: req.userId,
+      role: req.workspaceRole,
+      assigned: req.query.assigned === 'true',
+    }),
+  }));
 
 export const get = asyncHandler(async (req, res) =>
   successResponse(res, { data: await getProjectDetail(req.params.workspaceId, req.params.projectId) }));

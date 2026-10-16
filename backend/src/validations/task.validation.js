@@ -6,7 +6,14 @@ export const taskSortFields = ['createdAt', 'updatedAt', 'dueDate', 'priority', 
 
 const title = z.string().trim().min(1, 'Task title is required').max(240);
 const description = z.string().trim().max(10_000).nullable().optional();
-const dueDate = z.coerce.date().refine((value) => !Number.isNaN(value.valueOf()), 'Enter a valid due date');
+const startOfToday = () => {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+};
+
+const dueDate = z.coerce.date()
+  .refine((value) => !Number.isNaN(value.valueOf()), 'Enter a valid due date')
+  .refine((value) => value >= startOfToday(), 'Due date cannot be in the past');
 const version = z.coerce.number().int().positive('Task version must be positive');
 const progress = z.coerce.number().int().min(0, 'Progress must be between 0 and 100').max(100, 'Progress must be between 0 and 100');
 const assigneeId = z.string().uuid('Invalid assignee id');

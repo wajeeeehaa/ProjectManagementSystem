@@ -41,13 +41,25 @@ export const createProject = async (workspaceId, userId, input) => {
   return project;
 };
 
-export const listProjects = async (workspaceId) =>
-  requireDb()
+const assignedToViewer = (userId) => sql`exists (
+  select 1
+  from ${tasks}
+  left join ${taskAssignees} on ${taskAssignees.taskId} = ${tasks.id}
+  where ${tasks.workspaceId} = ${projects.workspaceId}
+    and ${tasks.projectId} = ${projects.id}
+    and (${tasks.assigneeId} = ${userId} or ${taskAssignees.userId} = ${userId})
+)`;
+
+export const listProjects = async (workspaceId, viewer = {}) => {
+  const where = [eq(projects.workspaceId, workspaceId)];
+  if (viewer.assigned && viewer.role === 'member') where.push(assignedToViewer(viewer.userId));
+  return requireDb()
     .select(projectFields)
     .from(projects)
     .innerJoin(users, eq(users.id, projects.createdBy))
-    .where(eq(projects.workspaceId, workspaceId))
+    .where(and(...where))
     .orderBy(desc(projects.updatedAt), asc(projects.name));
+};
 
 export const getProject = async (workspaceId, projectId) => {
   const [project] = await requireDb()

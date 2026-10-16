@@ -4,8 +4,12 @@ import {
   forgetLastWorkspaceId,
   pickWorkspaceId,
   readLastWorkspaceId,
+  workspaceActivityPath,
   workspaceHomePath,
   workspaceIdFromPath,
+  workspaceMembersPath,
+  workspaceProjectsPath,
+  workspaceSectionPath,
   writeLastWorkspaceId,
 } from './lastWorkspace';
 
@@ -54,5 +58,20 @@ describe('last workspace', () => {
     expect(workspaceIdFromPath('/dashboard')).toBeNull();
     expect(workspaceHomePath('alpha')).toBe('/workspaces/alpha');
     expect(workspaceHomePath(null)).toBe('/workspaces');
+    expect(workspaceProjectsPath('alpha')).toBe('/workspaces/alpha/projects');
+    expect(workspaceProjectsPath(null)).toBe('/workspaces');
+    expect(workspaceMembersPath('alpha')).toBe('/workspaces/alpha/members');
+    expect(workspaceMembersPath(null)).toBe('/workspaces');
+    expect(workspaceActivityPath('alpha')).toBe('/activity/alpha');
+    expect(workspaceActivityPath(null)).toBe('/activity');
+  });
+
+  it('keeps the current section when the workspace changes', () => {
+    expect(workspaceSectionPath('/workspaces/alpha', 'beta')).toBe('/workspaces');
+    expect(workspaceSectionPath('/workspaces/alpha/projects', 'beta')).toBe('/workspaces/beta/projects');
+    expect(workspaceSectionPath('/workspaces/alpha/projects/launch', 'beta')).toBe('/workspaces/beta/projects');
+    expect(workspaceSectionPath('/workspaces/alpha/members', 'beta')).toBe('/workspaces/beta/members');
+    expect(workspaceSectionPath('/activity/alpha/launch', 'beta')).toBe('/activity/beta');
+    expect(workspaceSectionPath('/workspaces', 'beta')).toBe('/workspaces');
   });
 });

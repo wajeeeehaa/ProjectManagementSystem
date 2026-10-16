@@ -32,6 +32,25 @@ export function workspaceHomePath(workspaceId: string | null) {
   return workspaceId ? `/workspaces/${workspaceId}` : '/workspaces';
 }
 
+export function workspaceProjectsPath(workspaceId: string | null) {
+  return workspaceId ? `/workspaces/${workspaceId}/projects` : '/workspaces';
+}
+
+export function workspaceMembersPath(workspaceId: string | null) {
+  return workspaceId ? `/workspaces/${workspaceId}/members` : '/workspaces';
+}
+
+export function workspaceActivityPath(workspaceId: string | null) {
+  return workspaceId ? `/activity/${workspaceId}` : '/activity';
+}
+
+export function workspaceSectionPath(pathname: string, workspaceId: string) {
+  if (/^\/workspaces\/[^/]+\/projects(\/|$)/.test(pathname)) return workspaceProjectsPath(workspaceId);
+  if (/^\/workspaces\/[^/]+\/members(\/|$)/.test(pathname)) return workspaceMembersPath(workspaceId);
+  if (pathname === '/activity' || pathname.startsWith('/activity/')) return workspaceActivityPath(workspaceId);
+  return '/workspaces';
+}
+
 const RESERVED_WORKSPACE_IDS = new Set(['resume']);
 
 export function workspaceIdFromPath(pathname: string) {
